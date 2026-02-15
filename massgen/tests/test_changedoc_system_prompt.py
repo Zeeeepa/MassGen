@@ -408,6 +408,39 @@ class TestChangedocAnalysisImprovements:
         assert "STRUCTURAL" in analysis
         assert "INCREMENTAL" in analysis
 
+    def test_subsequent_prompt_checklist_before_implementation(self):
+        """Subsequent round workflow must instruct checklist evaluation BEFORE implementation."""
+        from massgen.system_prompt_sections import (
+            _build_changedoc_subsequent_round_prompt,
+        )
+
+        prompt = _build_changedoc_subsequent_round_prompt()
+        lower = prompt.lower()
+        # Must mention evaluating/checklist before making edits
+        assert "submit_checklist" in lower or "checklist" in lower
+        # The workflow must make clear: evaluate first, implement only after verdict
+        normalized = " ".join(lower.split())
+        assert "before making any edits" in normalized or "before implementing" in normalized or "before you start building" in normalized
+
+    def test_subsequent_prompt_requires_output_changes_with_changedoc(self):
+        """Subsequent round prompt must state changedoc changes require output changes."""
+        from massgen.system_prompt_sections import (
+            _build_changedoc_subsequent_round_prompt,
+        )
+
+        prompt = _build_changedoc_subsequent_round_prompt()
+        lower = prompt.lower()
+        assert "changedoc alone" in lower or "changedoc changes must accompany" in lower
+
+    def test_key_changes_section_specifies_output(self):
+        """Key Changes section must reference output/deliverable, not just any changes."""
+        from massgen.system_prompt_sections import (
+            _build_changedoc_subsequent_round_prompt,
+        )
+
+        prompt = _build_changedoc_subsequent_round_prompt()
+        assert "Key Output Changes" in prompt
+
 
 # ---------------------------------------------------------------------------
 # Quality Assessment in changedoc tests (Area 2d)

@@ -163,6 +163,7 @@ class ConfigValidator:
     # Valid write modes for isolated write contexts
     VALID_WRITE_MODES = {"auto", "worktree", "isolated", "legacy"}
     VALID_DRIFT_CONFLICT_POLICIES = {"skip", "prefer_presenter", "fail"}
+    VALID_NOVELTY_INJECTION = {"none", "gentle", "moderate", "aggressive"}
 
     # Valid gap report modes
     VALID_GAP_REPORT_MODES = {"changedoc", "separate", "none"}
@@ -983,6 +984,15 @@ class ConfigValidator:
                         result.add_error(
                             f"Invalid drift_conflict_policy: '{policy}'",
                             f"{location}.coordination.drift_conflict_policy",
+                            f"Use one of: {valid_values}",
+                        )
+                if "novelty_injection" in coordination:
+                    novelty = coordination["novelty_injection"]
+                    if novelty not in self.VALID_NOVELTY_INJECTION:
+                        valid_values = ", ".join(sorted(self.VALID_NOVELTY_INJECTION))
+                        result.add_error(
+                            f"Invalid novelty_injection: '{novelty}'",
+                            f"{location}.coordination.novelty_injection",
                             f"Use one of: {valid_values}",
                         )
 

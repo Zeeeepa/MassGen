@@ -124,6 +124,8 @@ class AgentState:
     round_start_time: Optional[float] = None  # For per-round timeouts
     round_timeout_hooks: Optional[tuple] = None  # (post_hook, pre_hook) for resetting on new round
     round_timeout_state: Optional["RoundTimeoutState"] = None  # Shared timeout state
+    # Convergence tracking for novelty injection
+    checklist_history: List[Dict[str, Any]] = field(default_factory=list)
     # Decomposition mode fields
     stop_summary: Optional[str] = None  # Summary from stop tool
     stop_status: Optional[str] = None  # "complete" or "blocked"
@@ -759,6 +761,10 @@ class Orchestrator(ChatAgent):
         state = checklist_state
         items = checklist_items
 
+        # Capture orchestrator ref and agent_id for convergence tracking
+        _orchestrator = self
+        _agent_id = agent_id
+
         @tool(
             name="submit_checklist",
             description=(
@@ -785,6 +791,18 @@ class Orchestrator(ChatAgent):
                 state=_state,
                 substantiveness=args.get("substantiveness"),
             )
+
+            # Store checklist result for convergence detection
+            agent_state = _orchestrator.agent_states.get(_agent_id)
+            if agent_state is not None:
+                agent_state.checklist_history.append(
+                    {
+                        "verdict": result.get("verdict"),
+                        "true_count": result.get("true_count"),
+                        "substantiveness": result.get("substantiveness", {}),
+                        "convergence_offramp": result.get("convergence_offramp_triggered", False),
+                    },
+                )
 
             return {
                 "content": [
@@ -825,6 +843,27 @@ class Orchestrator(ChatAgent):
         logger.info(
             f"[Orchestrator] Registered submit_checklist SDK MCP tool for agent {agent_id}",
         )
+
+    def _detect_convergence(self, agent_id: str) -> tuple:
+        """Detect whether an agent is converging (incremental-only iterations).
+
+        Returns:
+            Tuple of (is_converging: bool, consecutive_count: int).
+            is_converging is True when 2+ consecutive checklist results show
+            incremental_only or decision_space_exhausted.
+        """
+        state = self.agent_states.get(agent_id)
+        if state is None:
+            return False, 0
+        history = state.checklist_history
+        consecutive = 0
+        for entry in reversed(history):
+            sub = entry.get("substantiveness", {})
+            if sub.get("incremental_only") or sub.get("decision_space_exhausted"):
+                consecutive += 1
+            else:
+                break
+        return consecutive >= 2, consecutive
 
     def _refresh_checklist_state_for_agent(self, agent_id: str) -> None:
         """Refresh the checklist tool's mutable state dict for an agent.
@@ -7300,6 +7339,30 @@ Your answer:"""
                 if branch_diff_summaries:
                     logger.info(f"[Orchestrator] Generated diff summaries for {agent_id}: {list(branch_diff_summaries.keys())}")
 
+            # Compute novelty pressure data for system prompt
+            novelty_injection = getattr(self.config.coordination_config, "novelty_injection", "none")
+            novelty_data = None
+            if novelty_injection != "none":
+                is_converging, consecutive = self._detect_convergence(agent_id)
+                restart_count = self.agent_states[agent_id].restart_count
+                logger.info(
+                    f"[Orchestrator] Novelty check for {agent_id}: "
+                    f"mode={novelty_injection}, restart_count={restart_count}, "
+                    f"is_converging={is_converging}, consecutive_incremental={consecutive}",
+                )
+                if novelty_injection == "aggressive" and restart_count > 0:
+                    novelty_data = {"consecutive": consecutive, "restart_count": restart_count}
+                elif is_converging:
+                    novelty_data = {"consecutive": consecutive, "restart_count": restart_count}
+                if novelty_data:
+                    logger.info(f"[Orchestrator] Novelty pressure APPLIED for {agent_id}: {novelty_data}")
+                else:
+                    logger.info(
+                        f"[Orchestrator] Novelty pressure NOT applied for {agent_id}: "
+                        f"aggressive requires restart_count>0 (got {restart_count}), "
+                        f"fallback requires is_converging=True (got {is_converging})",
+                    )
+
             system_message = self._get_system_message_builder().build_coordination_message(
                 agent=agent,
                 agent_id=agent_id,
@@ -7336,6 +7399,7 @@ Your answer:"""
                 branch_name=agent_branch,
                 other_branches=other_agent_branches if other_agent_branches else None,
                 branch_diff_summaries=branch_diff_summaries,
+                novelty_pressure_data=novelty_data,
             )
 
             # Update checklist tool state if registered (mutable dict — tool closure reads this)

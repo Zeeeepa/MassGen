@@ -30,6 +30,7 @@ from massgen.system_prompt_sections import (
     GrokGuidanceSection,
     MemorySection,
     MultimodalToolsSection,
+    NoveltyPressureSection,
     OutputFirstVerificationSection,
     PlanningModeSection,
     PostEvaluationSection,
@@ -145,6 +146,7 @@ class SystemMessageBuilder:
         branch_name: Optional[str] = None,
         other_branches: Optional[Dict[str, str]] = None,
         branch_diff_summaries: Optional[Dict[str, str]] = None,
+        novelty_pressure_data: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -242,6 +244,22 @@ class SystemMessageBuilder:
                     has_changedoc=changedoc_enabled,
                 ),
             )
+
+        # PRIORITY 10 (MEDIUM): Novelty Pressure (conditional)
+        if novelty_pressure_data is not None:
+            novelty_injection = getattr(
+                self.config.coordination_config,
+                "novelty_injection",
+                "none",
+            )
+            if novelty_injection != "none":
+                builder.add_section(
+                    NoveltyPressureSection(
+                        novelty_level=novelty_injection,
+                        consecutive_incremental_rounds=novelty_pressure_data.get("consecutive", 0),
+                        restart_count=novelty_pressure_data.get("restart_count", 0),
+                    ),
+                )
 
         # PRIORITY 5 (HIGH): Skills - Must be visible early
         if use_skills:

@@ -2536,6 +2536,7 @@ def _parse_coordination_config(coord_cfg: Dict[str, Any]) -> "CoordinationConfig
         write_mode=coord_cfg.get("write_mode"),
         drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
         enable_changedoc=coord_cfg.get("enable_changedoc", True),
+        novelty_injection=coord_cfg.get("novelty_injection", "none"),
     )
 
 
