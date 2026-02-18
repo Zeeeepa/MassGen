@@ -3613,7 +3613,9 @@ quality and priorities, since you have the full context and the subagent may run
 2. **Fresh Context**: Subagents start with a clean slate (just the task you provide)
 3. **Explicit Context Paths (REQUIRED)**: Every task must include `context_paths`
    - Use `[]` for clean-slate research (no extra context beyond task text)
-   - Use `["./"]` for read-only access to the full parent workspace
+   - Use `["./"]` for read-only access to the current parent workspace (CWD)
+   - Use `["./", "./temp_workspaces/<peer_subagent_id>"]` to also include peer Shared Reference
+     artifacts (e.g., `agent_A`); note: relative paths resolve from the parent workspace, not your CWD — prefer absolute paths when available
    - Use specific paths for least-privilege access (recommended when possible)
    - `context_files` remains optional for copying files into subagent workspace
 4. **No Nesting**: Subagents cannot spawn their own subagents
@@ -3688,7 +3690,9 @@ All subagents start at the same time and cannot see each other's output. Design 
 3. **Each task dict must have both `"task"` and `"context_paths"` fields**
 4. **`context_paths` must be explicit**:
    - Use `[]` if you intentionally want no extra context
-   - Use `["./"]` for full parent workspace read-only access
+   - Use `["./"]` for the current parent workspace (CWD)
+   - Use `["./", "./temp_workspaces/<peer_subagent_id>"]` to also include peer Shared Reference
+     artifacts (e.g., `agent_A`); note: relative paths resolve from the parent workspace, not your CWD — prefer absolute paths when available
    - Use specific paths for least-privilege access
 
 ```python

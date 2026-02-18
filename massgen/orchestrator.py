@@ -1815,6 +1815,28 @@ class Orchestrator(ChatAgent):
                 if isinstance(host_launch_prefix, list):
                     subagent_host_launch_prefix = host_launch_prefix
 
+        # Codex+Docker runs MCP servers in a containerized parent runtime.
+        # Without a host-launch bridge, strict isolated mode cannot launch subagents.
+        # Default to explicit inherited fallback for this backend/mode when unset.
+        backend_cfg = None
+        if hasattr(self, "agents") and isinstance(self.agents, dict):
+            parent_agent = self.agents.get(agent_id)
+            if parent_agent is not None and hasattr(parent_agent, "backend") and hasattr(parent_agent.backend, "config") and isinstance(parent_agent.backend.config, dict):
+                backend_cfg = parent_agent.backend.config
+        if backend_cfg is None and hasattr(agent, "backend") and hasattr(agent.backend, "config"):
+            backend_cfg = agent.backend.config
+        if (
+            isinstance(backend_cfg, dict)
+            and str(backend_cfg.get("type", "")).lower() == "codex"
+            and str(backend_cfg.get("command_line_execution_mode", "local")).lower() == "docker"
+            and subagent_runtime_mode == "isolated"
+            and not subagent_runtime_fallback_mode
+        ):
+            subagent_runtime_fallback_mode = "inherited"
+            logger.info(
+                "[Orchestrator] Defaulting subagent runtime fallback to 'inherited' for Codex Docker mode",
+            )
+
         # Discover and serialize specialized subagent types for the MCP server
         specialized_subagents_path = ""
         try:

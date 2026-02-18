@@ -792,7 +792,8 @@ Mode semantics:
 
 * ``isolated`` (default): require isolated subagent runtime behavior.
 * ``inherited``: run subagents in the parent runtime boundary.
-* ``subagent_runtime_fallback_mode: inherited``: only explicit way to downgrade when isolated prerequisites are unavailable.
+* ``subagent_runtime_fallback_mode: inherited``: explicit downgrade when isolated prerequisites are unavailable.
+* Codex + Docker default: when fallback is unset and ``subagent_runtime_mode`` is ``isolated``, orchestrator forwards fallback as ``inherited`` by default.
 
 Isolated mode in containerized parent runtimes may require a launch bridge:
 
@@ -800,6 +801,7 @@ Isolated mode in containerized parent runtimes may require a launch bridge:
 * If isolated mode is requested and prerequisites are unavailable:
   * with no fallback configured: subagent launch fails with actionable diagnostics
   * with explicit fallback configured: launch continues in inherited mode and returns a warning
+  * for Codex + Docker runs, fallback defaults to ``inherited`` when unset
 
 Execution model:
 

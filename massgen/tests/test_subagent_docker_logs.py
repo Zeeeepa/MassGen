@@ -232,6 +232,40 @@ class TestSubagentMcpConfigEnv:
         assert self._get_arg(args, "--runtime-fallback-mode") == "inherited"
         assert json.loads(self._get_arg(args, "--host-launch-prefix")) == ["host-launch", "--exec"]
 
+    def test_subagent_mcp_config_defaults_fallback_for_codex_docker(self, tmp_path):
+        """Codex+Docker should default runtime fallback to inherited when unset."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.agents["test_agent"].backend.config = {
+            "type": "codex",
+            "model": "gpt-5.3-codex",
+            "command_line_execution_mode": "docker",
+        }
+        orch.config.coordination_config.subagent_runtime_mode = "isolated"
+        # Intentionally omit subagent_runtime_fallback_mode.
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+
+        assert self._get_arg(args, "--runtime-mode") == "isolated"
+        assert self._get_arg(args, "--runtime-fallback-mode") == "inherited"
+
+    def test_subagent_mcp_config_keeps_strict_default_for_non_codex(self, tmp_path):
+        """Non-Codex backends keep strict isolated behavior unless fallback is explicit."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.agents["test_agent"].backend.config = {
+            "type": "openrouter",
+            "model": "z-ai/glm-5",
+            "command_line_execution_mode": "docker",
+        }
+        orch.config.coordination_config.subagent_runtime_mode = "isolated"
+        # Intentionally omit subagent_runtime_fallback_mode.
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+
+        assert self._get_arg(args, "--runtime-mode") == "isolated"
+        assert self._get_arg(args, "--runtime-fallback-mode") == ""
+
     def test_subagent_mcp_config_files_are_created_in_workspace(self, tmp_path, monkeypatch):
         """Temp config files should live in workspace so Docker-mounted MCP can read them."""
         orch, agent = self._make_orchestrator_and_agent(tmp_path)
