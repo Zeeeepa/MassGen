@@ -25,6 +25,7 @@ Behavior:
   - with no fallback: launch fails with actionable diagnostics
   - with `subagent_runtime_fallback_mode: inherited`: launch proceeds in inherited mode and emits an explicit warning
 - `inherited` runs subagents in the same runtime boundary as the parent
+- Codex + Docker default: if fallback is unset and `subagent_runtime_mode` is `isolated`, orchestrator forwards `subagent_runtime_fallback_mode: inherited` automatically to avoid hard-fail launch behavior in containerized Codex runs
 
 ## Context Contract
 
