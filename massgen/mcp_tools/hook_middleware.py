@@ -57,10 +57,19 @@ class MassGenHookMiddleware(Middleware):
         # Execute the actual tool
         result = await call_next(context)
 
-        # Check for pending injection
-        injection = self._read_post_tool_use_injection(tool_name)
-        if injection:
-            result = self._append_to_result(result, injection)
+        # Check for pending injection — wrapped so injection bugs never
+        # break the underlying tool call that already succeeded.
+        try:
+            injection = self._read_post_tool_use_injection(tool_name)
+            if injection:
+                result = self._append_to_result(result, injection)
+        except Exception as e:
+            logger.error(
+                "Hook middleware injection failed for tool %s: %s. " "Returning original result.",
+                tool_name,
+                e,
+                exc_info=True,
+            )
 
         return result
 
@@ -93,6 +102,11 @@ class MassGenHookMiddleware(Middleware):
             return None
 
         if not isinstance(payload, dict):
+            logger.warning(
+                "Hook file %s contains non-dict payload (type=%s); discarding",
+                hook_file,
+                type(payload).__name__,
+            )
             hook_file.unlink(missing_ok=True)
             return None
 
@@ -111,7 +125,11 @@ class MassGenHookMiddleware(Middleware):
                     hook_file.unlink(missing_ok=True)
                     return None
             except (TypeError, ValueError):
-                pass
+                logger.warning(
+                    "Invalid expires_at value %r in hook file %s; treating as non-expiring",
+                    expires_at,
+                    hook_file,
+                )
 
         # Validate sequence (monotonically increasing)
         sequence = payload.get("sequence", 0)
@@ -132,6 +150,10 @@ class MassGenHookMiddleware(Middleware):
         # Extract injection content
         inject = payload.get("inject")
         if not isinstance(inject, dict) or not inject.get("content"):
+            logger.warning(
+                "Hook file %s has missing or empty inject.content; discarding",
+                hook_file,
+            )
             hook_file.unlink(missing_ok=True)
             return None
 

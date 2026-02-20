@@ -1792,8 +1792,8 @@ class TestRuntimeInboxPoller:
 
         assert len(messages) == 1
         assert messages[0]["content"] == "valid"
-        # Malformed file should still exist (not consumed)
-        assert (inbox / "msg_1740000002_0.json").exists()
+        # Malformed file should be consumed to prevent infinite re-reads
+        assert not (inbox / "msg_1740000002_0.json").exists()
 
     def test_poll_idempotent(self, tmp_path):
         """Consumed files not re-read on subsequent polls."""

@@ -693,6 +693,101 @@ class TestSubagentContextPaths:
         for p in orch_ctx:
             assert p["permission"] == "read"
 
+    def test_context_paths_rejects_traversal_outside_allowed_roots(self, tmp_path):
+        """Paths that escape parent workspace AND parent context paths are rejected."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Try to escape",
+            parent_agent_id="test-agent",
+            subagent_id="escape-test",
+            context_paths=["../../etc/passwd"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        # The traversal path should be rejected (not in allowed roots)
+        assert len(resolved) == 0
+
+    def test_context_paths_allows_within_parent_workspace(self, tmp_path):
+        """Paths within parent workspace are accepted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        subdir = parent_ws / "src"
+        subdir.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Read source",
+            parent_agent_id="test-agent",
+            subagent_id="src-test",
+            context_paths=["src/"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(subdir.resolve())
+
+    def test_context_paths_allows_within_parent_context_path_roots(self, tmp_path):
+        """Paths within inherited parent context path roots are accepted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        external_repo = tmp_path / "external_repo"
+        external_repo.mkdir()
+        external_src = external_repo / "src"
+        external_src.mkdir()
+
+        parent_context_paths = [{"path": str(external_repo.resolve()), "permission": "read"}]
+        manager = self._make_manager(parent_ws, parent_context_paths=parent_context_paths)
+        config = SubagentConfig.create(
+            task="Read external source",
+            parent_agent_id="test-agent",
+            subagent_id="ext-test",
+            # Absolute path within a parent context root
+            context_paths=[str(external_src)],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(external_src.resolve())
+
+    def test_context_paths_rejects_traversal_even_with_parent_context_paths(self, tmp_path):
+        """Paths outside BOTH parent workspace and parent context roots are rejected."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        allowed_dir = tmp_path / "allowed"
+        allowed_dir.mkdir()
+
+        parent_context_paths = [{"path": str(allowed_dir.resolve()), "permission": "read"}]
+        manager = self._make_manager(parent_ws, parent_context_paths=parent_context_paths)
+        config = SubagentConfig.create(
+            task="Try to escape",
+            parent_agent_id="test-agent",
+            subagent_id="escape-test-2",
+            context_paths=["../../../etc/shadow"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 0
+
+    def test_context_paths_dot_slash_always_allowed(self, tmp_path):
+        """'./' (parent workspace) is always allowed."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Mount workspace",
+            parent_agent_id="test-agent",
+            subagent_id="dot-test",
+            context_paths=["./"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(parent_ws.resolve())
+
 
 class TestSubagentConfigInheritance:
     def test_inherits_parent_skill_settings_into_coordination(self, tmp_path):

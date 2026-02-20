@@ -185,12 +185,12 @@ function ApiKeysSection() {
             <div className="flex items-center gap-2">
               <span className="font-medium text-gray-800 dark:text-gray-200">GitHub Copilot</span>
               <span className="text-xs text-gray-500 dark:text-gray-400">
-                (available if logged in via <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">gh</code> CLI and <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">github-copilot-sdk</code> installed)
+                (available if logged in via <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">copilot</code> CLI <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">/login</code> and <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">github-copilot-sdk</code> installed)
               </span>
             </div>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            No API key required. Uses local GitHub CLI authentication.
+            No API key required. Uses Copilot CLI or GitHub token authentication.
           </p>
         </div>
       )}

@@ -153,15 +153,14 @@ class SubagentManager:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         # Callbacks to invoke when background subagents complete
         self._completion_callbacks: list[Callable[[str, SubagentResult], None]] = []
+        # Sequence counter for runtime inbox messages
+        self._message_seq: int = 0
 
         logger.info(
             f"[SubagentManager] Initialized for parent {parent_agent_id}, "
             f"workspace: {self.subagents_base}, max_concurrent: {max_concurrent}, "
             f"timeout: {default_timeout}s (min: {min_timeout}s, max: {max_timeout}s)" + (f", log_dir: {self._subagent_logs_base}" if self._subagent_logs_base else ""),
         )
-
-    # Sequence counter for runtime inbox messages
-    _message_seq: int = 0
 
     def send_message_to_subagent(
         self,
@@ -199,9 +198,9 @@ class SubagentManager:
         inbox_dir = workspace / ".massgen" / "runtime_inbox"
         inbox_dir.mkdir(parents=True, exist_ok=True)
 
-        SubagentManager._message_seq += 1
+        self._message_seq += 1
         timestamp = int(time.time())
-        filename = f"msg_{timestamp}_{SubagentManager._message_seq}.json"
+        filename = f"msg_{timestamp}_{self._message_seq}.json"
 
         msg_data = {
             "content": content,
@@ -366,6 +365,65 @@ class SubagentManager:
 
         return normalized
 
+    def _resolve_context_paths_for_subagent(
+        self,
+        config: "SubagentConfig",
+    ) -> list[dict[str, str]]:
+        """Resolve and validate context_paths from a subagent config.
+
+        Resolves relative paths against the parent workspace and validates that
+        each resolved path falls within an allowed root: either the parent
+        workspace itself or one of the inherited parent context path roots.
+
+        Paths that escape all allowed roots are rejected with a warning log
+        to prevent path traversal attacks from model-supplied input.
+
+        Args:
+            config: SubagentConfig with context_paths to resolve.
+
+        Returns:
+            List of validated context path dicts with "path" and "permission" keys.
+        """
+        resolved_paths: list[dict[str, str]] = []
+        if not config.context_paths:
+            return resolved_paths
+
+        parent_ws_resolved = self.parent_workspace.resolve()
+
+        # Build set of allowed roots: parent workspace + parent context path roots
+        allowed_roots: list[Path] = [parent_ws_resolved]
+        for pcp in self._parent_context_paths:
+            root = Path(pcp["path"])
+            if root not in allowed_roots:
+                allowed_roots.append(root)
+
+        seen: set[str] = set()
+        for rel_path in config.context_paths:
+            if rel_path in ("./", "."):
+                resolved = parent_ws_resolved
+            else:
+                candidate = Path(rel_path)
+                if candidate.is_absolute():
+                    resolved = candidate.resolve()
+                else:
+                    resolved = (self.parent_workspace / rel_path).resolve()
+
+            # Validate: resolved path must be within an allowed root
+            is_allowed = any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots)
+            if not is_allowed:
+                logger.warning(
+                    f"[SubagentManager] Rejecting context_path '{rel_path}': " f"resolved to {resolved} which is outside allowed roots",
+                )
+                continue
+
+            path_str = str(resolved)
+            if path_str not in seen:
+                seen.add(path_str)
+                resolved_paths.append({"path": path_str, "permission": "read"})
+                logger.info(f"[SubagentManager] Mounting context path: {path_str}")
+
+        return resolved_paths
+
     def register_completion_callback(
         self,
         callback: Callable[[str, "SubagentResult"], None],
@@ -526,7 +584,9 @@ class SubagentManager:
             try:
                 conversation = json.loads(conversation_file.read_text())
             except json.JSONDecodeError:
-                pass
+                logger.warning(
+                    f"[SubagentManager] Corrupted conversation log {conversation_file}; starting fresh",
+                )
 
         # Append new message
         message = {
@@ -852,17 +912,13 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 else:
                     logger.warning(f"[SubagentManager] Context file not found: {ctx_file}")
 
-        # Resolve config.context_paths (files/dirs relative to parent workspace)
-        if config.context_paths:
-            for rel_path in config.context_paths:
-                if rel_path in ("./", "."):
-                    resolved = self.parent_workspace.resolve()
-                else:
-                    resolved = (self.parent_workspace / rel_path).resolve()
-                path_str = str(resolved)
-                if path_str not in {p["path"] for p in context_paths}:
-                    context_paths.append({"path": path_str, "permission": "read"})
-                    logger.info(f"[SubagentManager] Mounting context path: {path_str}")
+        # Resolve config.context_paths with path traversal validation
+        validated_ctx_paths = self._resolve_context_paths_for_subagent(config)
+        existing = {p["path"] for p in context_paths}
+        for vcp in validated_ctx_paths:
+            if vcp["path"] not in existing:
+                context_paths.append(vcp)
+                existing.add(vcp["path"])
 
         workspace_abs = workspace.resolve()
 
@@ -1118,17 +1174,13 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         },
                     )
 
-        # Resolve config.context_paths (files/dirs relative to parent workspace)
-        if config.context_paths:
-            for rel_path in config.context_paths:
-                if rel_path in ("./", "."):
-                    resolved = self.parent_workspace.resolve()
-                else:
-                    resolved = (self.parent_workspace / rel_path).resolve()
-                path_str = str(resolved)
-                if path_str not in {p["path"] for p in context_paths}:
-                    context_paths.append({"path": path_str, "permission": "read"})
-                    logger.info(f"[SubagentManager] Mounting context path: {path_str}")
+        # Resolve config.context_paths with path traversal validation
+        validated_ctx_paths = self._resolve_context_paths_for_subagent(config)
+        existing = {p["path"] for p in context_paths}
+        for vcp in validated_ctx_paths:
+            if vcp["path"] not in existing:
+                context_paths.append(vcp)
+                existing.add(vcp["path"])
 
         workspace_abs = workspace.resolve()
 
@@ -1211,7 +1263,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                             # Capture non-JSON lines for error diagnostics
                             non_event_stdout_lines.append(line.decode().strip())
                         except Exception as e:
-                            logger.debug(f"[SubagentManager] Error processing event: {e}")
+                            logger.warning(f"[SubagentManager] Error processing event: {e}")
 
             # Drain stderr concurrently to prevent pipe buffer deadlock
             stderr_chunks: list[bytes] = []
@@ -1634,8 +1686,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     # Extract session_id from meta section
                     session_id = data.get("meta", {}).get("session_id")
                     return token_usage, str(log_dir / "turn_1" / "attempt_1"), session_id
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, OSError, KeyError, TypeError) as e:
+                    logger.warning(
+                        f"[SubagentManager] Failed to parse {status_file}: {e}",
+                    )
         return {}, None, None
 
     def _write_subprocess_log_reference(

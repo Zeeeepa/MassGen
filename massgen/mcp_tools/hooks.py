@@ -421,12 +421,12 @@ class PythonCallableHook(PatternHook):
             logger.warning(f"[PythonCallableHook] Hook {self.name} timed out for {function_name}")
             if self.fail_closed:
                 return HookResult.deny(reason=f"Hook {self.name} timed out")
-            return HookResult.allow()
+            return HookResult(allowed=True, hook_errors=[f"Hook {self.name} timed out"])
         except Exception as e:
             logger.error(f"[PythonCallableHook] Hook {self.name} failed: {e}")
             if self.fail_closed:
                 return HookResult.deny(reason=f"Hook {self.name} failed: {e}")
-            return HookResult.allow()
+            return HookResult(allowed=True, hook_errors=[f"Hook {self.name} failed: {e}"])
 
     def _normalize_result(self, result: Any) -> HookResult:
         """Normalize hook result to HookResult."""
@@ -1598,6 +1598,7 @@ class RuntimeInboxPoller:
                 f.unlink()
             except (json.JSONDecodeError, KeyError):
                 logger.warning(f"[RuntimeInboxPoller] Skipping malformed message: {f}")
+                f.unlink(missing_ok=True)
             except Exception as e:
                 logger.error(f"[RuntimeInboxPoller] Error reading {f}: {e}")
 
@@ -1640,6 +1641,23 @@ class HumanInputHook(PatternHook):
         self._pre_execute_callback: Callable[[], None] | None = None
         self._next_message_id: int = 1
 
+    @staticmethod
+    def _call_compat(callback: Callable[..., None], label: str, *args: Any) -> None:
+        """Call a callback with backward-compatible argument count.
+
+        Uses inspect.signature to determine the accepted parameter count and
+        passes only that many args. This avoids the fragile try/except TypeError
+        cascade which masks real TypeErrors raised inside the callback body.
+        """
+        import inspect
+
+        try:
+            sig = inspect.signature(callback)
+            n_params = len(sig.parameters)
+            callback(*args[:n_params])
+        except Exception as e:
+            logger.warning(f"[HumanInputHook] {label} callback failed: {e}")
+
     def set_pending_input(
         self,
         content: str,
@@ -1681,20 +1699,13 @@ class HumanInputHook(PatternHook):
             )
         if self._on_queue_callback:
             normalized_callback_targets = sorted(normalized_targets) if normalized_targets is not None else None
-            try:
-                self._on_queue_callback(content, normalized_callback_targets, message_id)
-            except TypeError:
-                try:
-                    self._on_queue_callback(content, normalized_callback_targets)
-                except TypeError:
-                    try:
-                        self._on_queue_callback(content)
-                    except Exception as e:
-                        logger.warning(f"[HumanInputHook] Queue callback failed: {e}")
-                except Exception as e:
-                    logger.warning(f"[HumanInputHook] Queue callback failed: {e}")
-            except Exception as e:
-                logger.warning(f"[HumanInputHook] Queue callback failed: {e}")
+            self._call_compat(
+                self._on_queue_callback,
+                "Queue",
+                content,
+                normalized_callback_targets,
+                message_id,
+            )
         return message_id
 
     def clear_pending_input(self) -> None:
@@ -1929,21 +1940,13 @@ class HumanInputHook(PatternHook):
             # the hook file may not be consumed immediately by the model).
             suppress_callback = (context or {}).get("suppress_inject_callback", False)
             if self._on_inject_callback and not suppress_callback:
-                try:
-                    self._on_inject_callback(combined_content, agent_id, delivered_messages)
-                except TypeError:
-                    # Backward compatibility for existing one-arg callbacks.
-                    try:
-                        self._on_inject_callback(combined_content, agent_id)
-                    except TypeError:
-                        try:
-                            self._on_inject_callback(combined_content)
-                        except Exception as e:
-                            logger.warning(f"[HumanInputHook] Inject callback failed: {e}")
-                    except Exception as e:
-                        logger.warning(f"[HumanInputHook] Inject callback failed: {e}")
-                except Exception as e:
-                    logger.warning(f"[HumanInputHook] Inject callback failed: {e}")
+                self._call_compat(
+                    self._on_inject_callback,
+                    "Inject",
+                    combined_content,
+                    agent_id,
+                    delivered_messages,
+                )
 
             return HookResult(
                 allowed=True,
