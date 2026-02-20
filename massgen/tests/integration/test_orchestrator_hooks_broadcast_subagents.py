@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Deterministic non-API integration tests for hooks, broadcast, and async subagents."""
 
 from __future__ import annotations

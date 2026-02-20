@@ -548,7 +548,7 @@ Store and maintain user preferences in ``memory/short_term/user_preferences.md``
    ---
 
    # User Preferences
-   - Language: Python 3.11+
+   - Language: Python 3.12+
    - Framework: FastAPI
    - Testing: pytest with coverage >80%
    - Documentation: Google-style docstrings

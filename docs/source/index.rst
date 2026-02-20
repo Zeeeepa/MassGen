@@ -17,7 +17,7 @@ MassGen: Multi-Agent Scaling System for GenAI
        <img src="https://img.shields.io/github/stars/Leezekun/MassGen?style=flat-square&logo=github&color=181717&logoColor=white" alt="GitHub Stars">
      </a>
      <a href="https://www.python.org/downloads/">
-       <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
+       <img src="https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+">
      </a>
      <a href="https://github.com/Leezekun/MassGen/blob/main/LICENSE">
        <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" alt="License">

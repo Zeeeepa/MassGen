@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Deterministic non-API integration tests for restart and external tool passthrough."""
 
 from __future__ import annotations
@@ -150,6 +149,264 @@ async def test_no_hook_midstream_deferred_for_first_answer(mock_orchestrator):
 
     assert result is None
     assert state.restart_pending is False
+
+
+@pytest.mark.asyncio
+async def test_no_hook_midstream_enforcement_includes_queued_human_input(mock_orchestrator, monkeypatch):
+    """Hookless fallback should still deliver queued runtime human input at checkpoints."""
+    from massgen.mcp_tools.hooks import HumanInputHook
+
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    state = orchestrator.agent_states[agent_id]
+    state.restart_pending = True
+    state.answer = "existing answer"
+
+    # No peer-answer updates in this scenario.
+    monkeypatch.setattr(
+        orchestrator,
+        "_select_midstream_answer_updates",
+        lambda _agent_id, _answers: ({}, False),
+    )
+
+    orchestrator._human_input_hook = HumanInputHook()
+    orchestrator._human_input_hook.set_pending_input("Please include concrete citations.")
+
+    result = await orchestrator._prepare_no_hook_midstream_enforcement(agent_id, {})
+
+    assert result is not None
+    assert "[Human Input]:" in result
+    assert "Please include concrete citations." in result
+    assert state.restart_pending is False
+
+
+@pytest.mark.asyncio
+async def test_no_hook_midstream_enforcement_allows_runtime_input_before_first_answer(mock_orchestrator, monkeypatch):
+    """Runtime control messages should still deliver during first-answer protection."""
+    from massgen.mcp_tools.hooks import HumanInputHook
+
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    state = orchestrator.agent_states[agent_id]
+    state.restart_pending = True
+    state.answer = None
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_select_midstream_answer_updates",
+        lambda _agent_id, _answers: ({}, False),
+    )
+
+    orchestrator._human_input_hook = HumanInputHook()
+    orchestrator._human_input_hook.set_pending_input("Focus on edge cases first.")
+
+    result = await orchestrator._prepare_no_hook_midstream_enforcement(agent_id, {})
+
+    assert result is not None
+    assert "[Human Input]:" in result
+    assert "Focus on edge cases first." in result
+
+
+@pytest.mark.asyncio
+async def test_no_hook_midstream_enforcement_includes_background_tool_updates(mock_orchestrator, monkeypatch):
+    """Hookless fallback should inject completed background tool results."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    state = orchestrator.agent_states[agent_id]
+    state.restart_pending = True
+    state.answer = "existing answer"
+
+    # No peer-answer updates in this scenario.
+    monkeypatch.setattr(
+        orchestrator,
+        "_select_midstream_answer_updates",
+        lambda _agent_id, _answers: ({}, False),
+    )
+
+    backend = orchestrator.agents[agent_id].backend
+    setattr(
+        backend,
+        "get_pending_background_tool_results",
+        lambda: [
+            {
+                "job_id": "bgtool_1",
+                "tool_name": "custom_tool__generate_media",
+                "status": "completed",
+                "result": "Generated image at /tmp/image.png",
+            },
+        ],
+    )
+
+    result = await orchestrator._prepare_no_hook_midstream_enforcement(agent_id, {})
+
+    assert result is not None
+    assert "BACKGROUND TOOL RESULTS" in result
+    assert "bgtool_1" in result
+    assert "custom_tool__generate_media" in result
+
+
+@pytest.mark.asyncio
+async def test_no_hook_midstream_enforcement_includes_subagent_completions(mock_orchestrator, monkeypatch):
+    """Hookless fallback should inject completed background subagent results."""
+    from massgen.subagent.models import SubagentResult
+
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    state = orchestrator.agent_states[agent_id]
+    state.restart_pending = True
+    state.answer = "existing answer"
+
+    # No peer-answer updates in this scenario.
+    monkeypatch.setattr(
+        orchestrator,
+        "_select_midstream_answer_updates",
+        lambda _agent_id, _answers: ({}, False),
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_get_pending_subagent_results",
+        lambda _aid: [
+            (
+                "subagent_1",
+                SubagentResult.create_success(
+                    subagent_id="subagent_1",
+                    answer="Subagent synthesis complete.",
+                    workspace_path="/workspace/subagent_1",
+                    execution_time_seconds=12.0,
+                ),
+            ),
+        ],
+    )
+
+    result = await orchestrator._prepare_no_hook_midstream_enforcement(agent_id, {})
+
+    assert result is not None
+    assert "subagent_1" in result
+    assert "Subagent synthesis complete." in result
+
+
+@pytest.mark.asyncio
+async def test_runtime_queue_wait_interrupt_for_active_external_wait(mock_orchestrator, monkeypatch):
+    """Queued runtime input should trigger wait interruption for external wait handlers."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    backend = orchestrator.agents[agent_id].backend
+
+    setattr(backend, "is_background_wait_active", lambda: True)
+    captured_payload: dict = {}
+    setattr(
+        backend,
+        "notify_background_wait_interrupt",
+        lambda payload: captured_payload.update(payload) or True,
+    )
+
+    async def _fake_runtime_sections(_agent_id: str):
+        return ["[Human Input]: Prioritize edge-case tests."]
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_collect_no_hook_runtime_fallback_sections",
+        _fake_runtime_sections,
+    )
+
+    interrupted = await orchestrator._maybe_interrupt_background_wait_for_agent(
+        agent_id,
+        trigger="queued_human_input",
+    )
+
+    assert interrupted is True
+    assert captured_payload.get("interrupt_reason") == "runtime_injection_available"
+    assert "edge-case tests" in str(captured_payload.get("injected_content", ""))
+
+
+@pytest.mark.asyncio
+async def test_runtime_queue_wait_interrupt_skips_when_agent_not_waiting(mock_orchestrator, monkeypatch):
+    """No signal should be emitted when the backend is not actively waiting."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    backend = orchestrator.agents[agent_id].backend
+
+    setattr(backend, "is_background_wait_active", lambda: False)
+    called = {"collect": 0}
+
+    async def _fake_runtime_sections(_agent_id: str):
+        called["collect"] += 1
+        return ["[Human Input]: should not be collected"]
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_collect_no_hook_runtime_fallback_sections",
+        _fake_runtime_sections,
+    )
+
+    interrupted = await orchestrator._maybe_interrupt_background_wait_for_agent(
+        agent_id,
+        trigger="queued_human_input",
+    )
+
+    assert interrupted is False
+    assert called["collect"] == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_execution_inserts_runtime_user_instructions_after_original_message(
+    mock_orchestrator,
+):
+    """Delivered runtime input should be persisted into subsequent execution context."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Create an image about a goat."
+    agent_id = "agent_a"
+
+    # Hookless backends should still initialize the runtime-injection hook.
+    orchestrator._setup_hook_manager_for_agent(agent_id, orchestrator.agents[agent_id], {})
+    assert orchestrator._human_input_hook is not None
+    orchestrator._human_input_hook.set_pending_input(
+        "include bob dylan",
+        target_agents=[agent_id],
+    )
+
+    runtime_sections = await orchestrator._collect_no_hook_runtime_fallback_sections(agent_id)
+    assert runtime_sections
+    assert "include bob dylan" in "\n".join(runtime_sections)
+
+    _configure_agent_script(
+        orchestrator.agents[agent_id],
+        scripted_tool_calls=[
+            [{"name": "new_answer", "arguments": {"content": "Generated image prompt"}}],
+        ],
+    )
+
+    captured_messages = []
+    original_stream = orchestrator.agents[agent_id].backend.stream_with_tools
+
+    async def _capture_stream(messages, tools=None, **kwargs):
+        captured_messages.append(messages)
+        async for chunk in original_stream(messages, tools=tools, **kwargs):
+            yield chunk
+
+    orchestrator.agents[agent_id].backend.stream_with_tools = _capture_stream
+
+    emitted = await _collect_stream(
+        orchestrator._stream_agent_execution(agent_id, orchestrator.current_task, {}),
+    )
+
+    assert ("result", ("answer", "Generated image prompt")) in emitted
+    assert captured_messages
+    first_user_message = next(
+        (msg.get("content", "") for msg in captured_messages[0] if msg.get("role") == "user"),
+        "",
+    )
+    assert "<RUNTIME USER INSTRUCTIONS>" in first_user_message
+    assert "include bob dylan" in first_user_message
+    assert "<END OF ORIGINAL MESSAGE>" in first_user_message
+    assert "<CURRENT ANSWERS from the agents>" in first_user_message
+    assert first_user_message.index("<END OF ORIGINAL MESSAGE>") < first_user_message.index(
+        "<RUNTIME USER INSTRUCTIONS>",
+    )
+    assert first_user_message.index("<RUNTIME USER INSTRUCTIONS>") < first_user_message.index(
+        "<CURRENT ANSWERS from the agents>",
+    )
 
 
 @pytest.mark.asyncio

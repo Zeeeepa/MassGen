@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Test custom tools functionality in ResponseBackend.
 """
@@ -587,6 +586,38 @@ class TestResponseBackendCustomTools:
         assert start["job_id"] not in pending_ids
 
     @pytest.mark.asyncio
+    async def test_wait_for_background_tool_returns_interrupt_payload_when_runtime_input_available(
+        self,
+    ):
+        """wait_for_background_tool should exit early with injected runtime content."""
+        backend = ResponseBackend(
+            api_key=self.api_key,
+            custom_tools=[{"func": async_weather_fetcher}],
+            agent_id="agent_a",
+        )
+        backend._execution_context = ExecutionContext(messages=[], agent_id="agent_a")
+
+        async def interrupt_provider(agent_id: str):
+            assert agent_id == "agent_a"
+            return {
+                "interrupt_reason": "runtime_injection_available",
+                "injected_content": "[Human Input]: Please prioritize edge cases.",
+            }
+
+        backend.set_background_wait_interrupt_provider(interrupt_provider)
+
+        waited = await _invoke_custom_tool_json(
+            backend,
+            "custom_tool__wait_for_background_tool",
+            {"timeout_seconds": 1.0},
+        )
+        assert waited["success"] is True
+        assert waited["ready"] is False
+        assert waited["interrupted"] is True
+        assert waited["interrupt_reason"] == "runtime_injection_available"
+        assert "edge cases" in waited["injected_content"]
+
+    @pytest.mark.asyncio
     async def test_list_background_tools_defaults_to_running_only(self):
         """List lifecycle tool should show running jobs by default and support include_all."""
         backend = ResponseBackend(
@@ -937,6 +968,21 @@ def test_custom_tools_build_server_config_env_merge(tmp_path: Path) -> None:
     env = cfg.get("env", {})
     assert env.get("OPENAI_API_KEY") == "test-key"
     assert env.get("FASTMCP_SHOW_CLI_BANNER") == "false"
+
+
+def test_custom_tools_build_server_config_includes_wait_interrupt_file(tmp_path: Path) -> None:
+    """Server config should pass through a wait interrupt file path when provided."""
+    specs_path = tmp_path / "custom_tool_specs.json"
+    wait_interrupt_file = tmp_path / "wait_interrupt.json"
+    cfg = build_server_config(
+        specs_path,
+        wait_interrupt_file=wait_interrupt_file,
+    )
+
+    args = cfg.get("args", [])
+    assert "--wait-interrupt-file" in args
+    index = args.index("--wait-interrupt-file")
+    assert args[index + 1] == str(wait_interrupt_file)
 
 
 def test_custom_tools_server_standalone_import_no_relative_imports():

@@ -671,7 +671,7 @@ Base Image: massgen/mcp-runtime:latest
 
 **Contents:**
 
-* Base: Python 3.11-slim
+* Base: Python 3.12-slim
 * System packages: git, curl, build-essential, Node.js 20.x
 * Python packages: pytest, requests, numpy, pandas
 * User: non-root (massgen, UID 1000)

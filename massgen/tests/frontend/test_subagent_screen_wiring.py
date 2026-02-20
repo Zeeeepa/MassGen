@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Regression tests for subagent screen live-status wiring in Textual TUI."""
 
 from types import SimpleNamespace

@@ -1,12 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Fuzzy model name matching utility for config builder.
 Allows users to type approximate model names and find exact matches.
 
 Based on contribution from acrobat3 (K. from JP).
 """
-
-from typing import List
 
 from massgen.backend.capabilities import BACKEND_CAPABILITIES
 
@@ -179,7 +176,7 @@ COMMON_MODELS_BY_PROVIDER = {
 }
 
 
-def get_all_models_for_provider(provider_type: str, use_api: bool = True) -> List[str]:
+def get_all_models_for_provider(provider_type: str, use_api: bool = True) -> list[str]:
     """Get all models for a specific provider from capabilities registry.
 
     For providers with many models (marked as "custom"), attempts to fetch from API first,

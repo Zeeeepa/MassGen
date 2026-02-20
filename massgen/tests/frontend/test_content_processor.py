@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for ContentProcessor event handling."""
 
 from massgen.events import EventType, MassGenEvent

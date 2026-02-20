@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for ChangedocSection system prompt.
 
 Tests cover:

@@ -5,13 +5,13 @@ Installation
 Prerequisites
 =============
 
-MassGen requires **Python 3.11 or higher**.
+MassGen requires **Python 3.12 or higher**.
 
 A guide to install python can be found `here <https://realpython.com/installing-python/>`_
 
 .. code-block:: bash
 
-   python --version  # Should be 3.11+
+   python --version  # Should be 3.12+
 
 Quick Install
 =============
@@ -242,7 +242,7 @@ Troubleshooting
 
 .. code-block:: bash
 
-   python --version  # Need 3.11+
+   python --version  # Need 3.12+
    pip install --upgrade massgen
 
 **API key not found:**

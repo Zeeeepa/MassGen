@@ -1,9 +1,9 @@
 # MassGen MCP Runtime Environment (with sudo)
 # This variant includes sudo access for runtime package installation
 # Container is isolated from host system
-# Base image: Python 3.11 slim for balance of features and size
+# Base image: Python 3.12 slim for balance of features and size
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Metadata
 LABEL maintainer="MassGen Team"

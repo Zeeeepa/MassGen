@@ -10,7 +10,7 @@
 
 [![Docs](https://img.shields.io/badge/docs-massgen.ai-blue?style=flat-square&logo=readthedocs&logoColor=white)](https://docs.massgen.ai)
 [![GitHub Stars](https://img.shields.io/github/stars/Leezekun/MassGen?style=flat-square&logo=github&color=181717&logoColor=white)](https://github.com/Leezekun/MassGen)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square)](LICENSE)
 
 </div>
@@ -232,7 +232,7 @@ This collaborative approach ensures that the final output leverages collective i
 
 ### 1. 📥 Installation
 
-**Method 1: PyPI Installation** (Recommended - Python 3.11+):
+**Method 1: PyPI Installation** (Recommended - Python 3.12+):
 
 ```bash
 # Install MassGen via pip

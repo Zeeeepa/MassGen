@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for the general hook framework.
 
@@ -22,6 +21,7 @@ from massgen.mcp_tools.hooks import (
     HookEvent,
     HookResult,
     HookType,
+    HumanInputHook,
     MidStreamInjectionHook,
     PatternHook,
     PythonCallableHook,
@@ -552,6 +552,138 @@ class TestGeneralHookManager:
 # =============================================================================
 # Built-in Hook Tests
 # =============================================================================
+
+
+class TestHumanInputHook:
+    """Tests for HumanInputHook targeted runtime delivery semantics."""
+
+    @pytest.mark.asyncio
+    async def test_targeted_message_only_injects_to_selected_agent(self):
+        hook = HumanInputHook()
+        hook.set_pending_input("Only agent_b should receive this.", target_agents=["agent_b"])
+
+        result_a = await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert result_a.inject is None
+        assert not hook.has_pending_input_for_agent("agent_a")
+        assert hook.has_pending_input_for_agent("agent_b")
+
+        result_b = await hook.execute("tool_x", "{}", context={"agent_id": "agent_b"})
+        assert result_b.inject is not None
+        assert "Only agent_b should receive this." in result_b.inject["content"]
+        assert not hook.has_pending_input_for_agent("agent_b")
+        assert not hook.has_pending_input()
+
+    @pytest.mark.asyncio
+    async def test_group_target_lingers_per_agent_until_each_receives(self):
+        hook = HumanInputHook()
+        hook.set_pending_input(
+            "Broadcast to both agents.",
+            target_agents=["agent_a", "agent_b"],
+        )
+
+        result_a = await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert result_a.inject is not None
+        assert hook.get_pending_count_for_agent("agent_a") == 0
+        assert hook.get_pending_count_for_agent("agent_b") == 1
+        assert hook.has_pending_input()
+
+        result_b = await hook.execute("tool_x", "{}", context={"agent_id": "agent_b"})
+        assert result_b.inject is not None
+        assert hook.get_pending_count_for_agent("agent_b") == 0
+        assert not hook.has_pending_input()
+
+    @pytest.mark.asyncio
+    async def test_inject_callback_receives_agent_id(self):
+        hook = HumanInputHook()
+        captured: list[tuple[str, str]] = []
+
+        hook.set_inject_callback(lambda content, agent_id: captured.append((content, agent_id)))
+        hook.set_pending_input("Callback payload", target_agents=["agent_a"])
+
+        await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert captured == [("Callback payload", "agent_a")]
+
+    def test_queue_callback_receives_target_agents_and_message_id(self):
+        hook = HumanInputHook()
+        captured: list[tuple[str, list[str] | None, int | None]] = []
+
+        hook.set_queue_callback(
+            lambda content, target_agents, message_id: captured.append(
+                (content, target_agents, message_id),
+            ),
+        )
+        message_id = hook.set_pending_input(
+            "Queued callback payload",
+            target_agents=["agent_b", "agent_a"],
+        )
+
+        assert captured == [
+            (
+                "Queued callback payload",
+                ["agent_a", "agent_b"],
+                message_id,
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_pending_messages_snapshot_and_pop_latest(self):
+        hook = HumanInputHook()
+        first_id = hook.set_pending_input(
+            "First queued message",
+            target_agents=["agent_a", "agent_b"],
+        )
+        second_id = hook.set_pending_input(
+            "Second queued message",
+            target_agents=["agent_b"],
+        )
+
+        pending = hook.get_pending_messages(agent_ids=["agent_a", "agent_b"])
+        assert [entry["id"] for entry in pending] == [first_id, second_id]
+        assert pending[0]["pending_agents"] == ["agent_a", "agent_b"]
+        assert pending[1]["pending_agents"] == ["agent_b"]
+
+        removed = hook.pop_latest_pending_input()
+        assert removed is not None
+        assert removed["id"] == second_id
+        assert removed["content"] == "Second queued message"
+
+        pending_after = hook.get_pending_messages(agent_ids=["agent_a", "agent_b"])
+        assert [entry["id"] for entry in pending_after] == [first_id]
+
+    @pytest.mark.asyncio
+    async def test_inject_callback_receives_per_message_delivery_metadata(self):
+        hook = HumanInputHook()
+        captured: list[tuple[str, str, list[dict]]] = []
+
+        hook.set_inject_callback(
+            lambda content, agent_id, delivered: captured.append((content, agent_id, delivered)),
+        )
+        first_id = hook.set_pending_input("Message one", target_agents=["agent_a"])
+        second_id = hook.set_pending_input("Message two", target_agents=["agent_a"])
+
+        await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+
+        assert captured
+        combined_content, delivered_agent, delivered_items = captured[0]
+        assert delivered_agent == "agent_a"
+        assert "Message one" in combined_content
+        assert "Message two" in combined_content
+        assert [item["id"] for item in delivered_items] == [first_id, second_id]
+        assert [item["content"] for item in delivered_items] == ["Message one", "Message two"]
+
+    @pytest.mark.asyncio
+    async def test_delivered_message_history_persists_after_pending_queue_drains(self):
+        hook = HumanInputHook()
+        message_id = hook.set_pending_input("Persist this runtime instruction.", target_agents=["agent_a"])
+
+        result = await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert result.inject is not None
+        assert message_id is not None
+        assert not hook.has_pending_input()
+
+        delivered = hook.get_delivered_messages_for_agent("agent_a")
+        assert [entry["id"] for entry in delivered] == [message_id]
+        assert [entry["content"] for entry in delivered] == ["Persist this runtime instruction."]
 
 
 class TestMidStreamInjectionHook:

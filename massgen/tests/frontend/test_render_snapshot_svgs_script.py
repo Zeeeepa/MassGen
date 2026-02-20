@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for scripts/render_snapshot_svgs.py."""
 
 from __future__ import annotations

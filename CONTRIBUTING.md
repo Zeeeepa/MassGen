@@ -301,7 +301,7 @@ memory:
 
 ## 📋 Prerequisites
 
-- Python 3.11 or higher
+- Python 3.12 or higher
 - Git
 - API keys for the model providers you want to use
 - [uv](https://github.com/astral-sh/uv) for dependency management (recommended)

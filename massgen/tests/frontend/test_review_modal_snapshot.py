@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Snapshot tests for the GitDiffReviewModal to visually verify the change review experience."""
 
 from pathlib import Path
@@ -35,9 +34,7 @@ index abc1234..def5678 100644
      # end
 """
 
-MULTI_FILE_DIFF = (
-    SAMPLE_DIFF
-    + """\
+MULTI_FILE_DIFF = SAMPLE_DIFF + """\
 
 diff --git a/new_feature.py b/new_feature.py
 new file mode 100644
@@ -53,7 +50,6 @@ new file mode 100644
 +        result.append(item * 2)
 +    return result
 """
-)
 
 
 def _make_review_changes():

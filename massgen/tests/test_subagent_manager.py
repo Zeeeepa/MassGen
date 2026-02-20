@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for SubagentManager callback mechanism.
 
@@ -10,7 +9,6 @@ Tests for the async subagent execution feature (MAS-214):
 """
 
 from pathlib import Path
-from typing import List, Tuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -104,7 +102,7 @@ class TestSubagentManagerCallbackInvocation:
         )
 
         # Track callback invocations
-        invocations: List[Tuple[str, SubagentResult]] = []
+        invocations: list[tuple[str, SubagentResult]] = []
 
         def track_callback(subagent_id: str, result: SubagentResult):
             invocations.append((subagent_id, result))
@@ -140,7 +138,7 @@ class TestSubagentManagerCallbackInvocation:
             parent_agent_configs=[],
         )
 
-        invocations: List[Tuple[str, SubagentResult]] = []
+        invocations: list[tuple[str, SubagentResult]] = []
 
         def track_callback(subagent_id: str, result: SubagentResult):
             invocations.append((subagent_id, result))
@@ -175,7 +173,7 @@ class TestSubagentManagerCallbackInvocation:
             parent_agent_configs=[],
         )
 
-        invocations: List[Tuple[str, SubagentResult]] = []
+        invocations: list[tuple[str, SubagentResult]] = []
 
         def track_callback(subagent_id: str, result: SubagentResult):
             invocations.append((subagent_id, result))

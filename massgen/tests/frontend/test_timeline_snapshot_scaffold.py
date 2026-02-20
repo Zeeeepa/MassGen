@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Layer 3 Textual SVG snapshot tests for critical timeline states."""
 
 from __future__ import annotations
@@ -17,6 +16,9 @@ from massgen.frontend.displays.textual_widgets.collapsible_text_card import (
     CollapsibleTextCard,
 )
 from massgen.frontend.displays.textual_widgets.content_sections import TimelineSection
+from massgen.frontend.displays.textual_widgets.queued_input_banner import (
+    QueuedInputBanner,
+)
 from massgen.frontend.displays.textual_widgets.subagent_card import SubagentCard
 from massgen.frontend.displays.textual_widgets.tool_batch_card import (
     ToolBatchCard,
@@ -168,6 +170,28 @@ def _build_real_tui_snapshot_app(tmp_path: Path) -> App:
     app = textual_display_module.TextualApp(
         display=display,
         question="Create a poem about Bob Dylan and write it to a file in my workspace.",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+    return app
+
+
+def _build_real_tui_multi_agent_snapshot_app(tmp_path: Path) -> App:
+    display = TextualTerminalDisplay(
+        ["agent_a", "agent_b"],
+        agent_models={
+            "agent_a": "claude-sonnet-4-5",
+            "agent_b": "gpt-5.3-codex",
+        },
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Evaluate both answers and merge the strongest reasoning.",
         buffers=display._buffers,
         buffer_lock=display._buffer_lock,
         buffer_flush_interval=display.buffer_flush_interval,
@@ -405,4 +429,75 @@ def test_timeline_snapshot_real_tui_toast_stack(snap_compare, monkeypatch, tmp_p
         _build_real_tui_snapshot_app(tmp_path),
         terminal_size=(140, 42),
         run_before=_seed_real_tui_toast_snapshot,
+    )
+
+
+async def _seed_real_tui_runtime_injection_snapshot(pilot) -> None:  # noqa: ANN001 - fixture-provided type
+    app = pilot.app
+    app.agent_widgets["agent_a"]._hide_loading()
+    app.agent_widgets["agent_b"]._hide_loading()
+    _stop_round_timers_if_running(app)
+
+    # Show per-agent queued runtime injection status in the tab bar and banner.
+    assert app._tab_bar is not None
+    app._tab_bar.set_pending_injection_counts({"agent_a": 0, "agent_b": 1})
+
+    banner = app._queued_input_banner
+    if banner is None:
+        banner = QueuedInputBanner(id="queued_input_banner")
+        app._queued_input_banner = banner
+        app._ensure_queued_input_banner_mounted()
+    banner.set_messages(
+        [
+            {
+                "id": 11,
+                "content": "Please include edge-case handling in your revised answer.",
+                "target_label": "all agents",
+                "pending_agents": ["agent_b"],
+            },
+            {
+                "id": 12,
+                "content": "Also add one adversarial test case for malformed input.",
+                "target_label": "all agents",
+                "pending_agents": ["agent_b"],
+            },
+        ],
+    )
+    banner.set_pending_counts({"agent_b": 2})
+    app._set_queued_input_region_visible(True)
+
+    # Agent A already received the runtime message: add an explicit timeline entry.
+    panel = app.agent_widgets["agent_a"]
+    timeline = panel._get_timeline()
+    assert timeline is not None
+    timeline.add_text(
+        "Runtime Injection #10 -> Delivered to agent_a: Please include edge-case handling in your revised answer.",
+        text_class="status runtime-injection",
+        round_number=1,
+    )
+    timeline.add_text(
+        "Applied the requested edge-case checks and updated my draft accordingly.",
+        text_class="content-inline",
+        round_number=1,
+    )
+
+    app.query_one("#timeout_display", Label).update("⏱ 2:14 / 10:00")
+    app.query_one("#status_cwd", Static).update("[dim]📁[/] /workspace")
+    app.set_focus(None)
+    _complete_tool_appearance_states(app)
+    _stop_all_tui_timers(app)
+    await pilot.pause()
+
+
+def test_timeline_snapshot_real_tui_runtime_injection_queue_and_delivery(
+    snap_compare,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Snapshot of queued + injected runtime input with per-agent pending state."""
+    _configure_real_tui_snapshot_environment(monkeypatch)
+    assert snap_compare(
+        _build_real_tui_multi_agent_snapshot_app(tmp_path),
+        terminal_size=(150, 44),
+        run_before=_seed_real_tui_runtime_injection_snapshot,
     )

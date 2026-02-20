@@ -1,8 +1,8 @@
 # MassGen MCP Runtime Environment
 # Provides isolated execution environment for command execution with Docker isolation
-# Base image: Python 3.11 slim for balance of features and size
+# Base image: Python 3.12 slim for balance of features and size
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Metadata
 LABEL maintainer="MassGen Team"

@@ -186,7 +186,7 @@ Orchestration End
 ### Base Image: massgen/mcp-runtime:latest
 
 **Contents:**
-- Base: Python 3.11-slim
+- Base: Python 3.12-slim
 - System packages: git, curl, build-essential, Node.js 20.x, ripgrep
 - Python packages: pytest, requests, numpy, pandas, ast-grep-cli
 - CLI tools: openskills, semtools, agent-browser (npm), uv (for uvx)

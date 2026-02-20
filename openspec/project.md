@@ -11,7 +11,7 @@ MassGen (Multi-Agent Scaling System for GenAI) is a cutting-edge multi-agent orc
 - Deliver comprehensive logging and visualization of agent interactions
 
 ## Tech Stack
-- **Language**: Python 3.11+
+- **Language**: Python 3.12+
 - **Package Manager**: uv (preferred over pip)
 - **Build System**: setuptools with pyproject.toml
 - **LLM SDKs**: anthropic, openai, google-genai, xai-sdk, cerebras-cloud-sdk, litellm
