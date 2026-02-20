@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.54, adding Subagent Messaging & Copilot SDK Backend! 🚀 Send messages to running subagents mid-execution to steer their work in real time — target specific agents or broadcast to all, with queued message management. New `copilot` backend powered by `github-copilot-sdk` with native MCP server integration and custom tool support. Plus: Gemini 3.1 Pro model support, per-agent injection targeting, and MCP hooks improvements.
+We're excited to release MassGen v0.1.54, adding Subagent Messaging & Copilot SDK Backend! 🚀 Send messages to running subagents mid-execution to steer their work in real time — target specific agents or broadcast to all, with queued message management. New `copilot` backend powered by `github-copilot-sdk` with native MCP server integration and custom tool support. Plus: Gemini 3.1 Pro model support and MCP hooks improvements.
 
 ## Install
 
@@ -29,7 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.54, adding Subagent Messaging & Copilot SDK Backend! 🚀 Send messages to running subagents mid-execution to steer their work in real time — target specific agents or broadcast to all, with queued message management. New `copilot` backend powered by `github-copilot-sdk` with native MCP server integration and custom tool support. Plus: Gemini 3.1 Pro model support, per-agent injection targeting, and MCP hooks improvements.
+We're excited to release MassGen v0.1.54, adding Subagent Messaging & Copilot SDK Backend! 🚀 Send messages to running subagents mid-execution to steer their work in real time — target specific agents or broadcast to all, with queued message management. New `copilot` backend powered by `github-copilot-sdk` with native MCP server integration and custom tool support. Plus: Gemini 3.1 Pro model support and MCP hooks improvements.
 
 **Key Features:**
 

@@ -244,10 +244,10 @@ Most configurations use environment variables for API keys:so
 pip install --upgrade massgen
 
 # Launch with the new Copilot backend
-uv run massgen --backend copilot --model copilot "Your question"
+uv run massgen --config massgen/configs/basic/single/copilot.yaml "What is GitHub copilot?"
 
 # Multi-agent coordination with subagent messaging
-uv run massgen
+uv run massgen --config @examples/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research Bob Dylan"
 ```
 
 ### v0.1.53
