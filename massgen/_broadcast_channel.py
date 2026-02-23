@@ -108,15 +108,20 @@ class BroadcastChannel:
                 expected_count = 1
             elif target_agents:
                 # Targeted mode: only specified agents respond
+                # Resolve anonymous IDs to real IDs and filter out sender
                 real_target_ids = self._resolve_anonymous_to_real(target_agents)
                 filtered_targets = [t for t in real_target_ids if t != sender_agent_id]
 
+                # Validate that at least one valid target remains
                 if not filtered_targets:
+                    # Get valid anonymous agent IDs for error message
                     valid_anon_ids = list(self.orchestrator.coordination_tracker.get_anonymous_agent_mapping().keys())
+                    # Filter out sender's anonymous ID
                     sender_anon_id = self.orchestrator.coordination_tracker.get_reverse_agent_mapping().get(sender_agent_id)
                     if sender_anon_id:
                         valid_anon_ids = [aid for aid in valid_anon_ids if aid != sender_anon_id]
-                    error_msg = f"None of the specified target_agents are valid or available: {target_agents}. Valid agent IDs (excluding sender): {valid_anon_ids}"
+
+                    error_msg = f"None of the specified target_agents are valid or available: {target_agents}. " f"Valid agent IDs (excluding sender): {valid_anon_ids}"
                     logger.error(f"📢 [Broadcast] {error_msg}")
                     raise ValueError(error_msg)
 
@@ -132,7 +137,7 @@ class BroadcastChannel:
                 timestamp=datetime.now(),
                 timeout=timeout,
                 expected_response_count=expected_count,
-                target_agents=target_agents,
+                target_agents=target_agents,  # Store for inject_into_agents()
             )
 
             self.active_broadcasts[request_id] = broadcast
@@ -199,6 +204,7 @@ class BroadcastChannel:
         if broadcast.target_agents:
             # Targeted mode: only query specified agents
             real_target_ids = self._resolve_anonymous_to_real(broadcast.target_agents)
+            # Filter out sender and non-existent agents
             target_agents = [(agent_id, agent) for agent_id, agent in self.orchestrator.agents.items() if agent_id in real_target_ids and agent_id != broadcast.sender_agent_id]
             logger.info(
                 f"[Broadcast] Targeting specific agents: {broadcast.target_agents} -> {[aid for aid, _ in target_agents]}",
@@ -286,7 +292,7 @@ class BroadcastChannel:
                 self.response_events[request_id].wait(),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             async with self._lock:
                 broadcast.status = BroadcastStatus.TIMEOUT
 
@@ -463,7 +469,7 @@ class BroadcastChannel:
                         logger.info(f"📢 [Human] Stored Q&A (total: {len(self._human_qa_history)})")
                     else:
                         logger.info("📢 [Human] No response provided (skipped)")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.info("📢 [Human] Timeout - no response received")
                 except Exception as e:
                     logger.error(f"📢 [Human] Error prompting for response: {e}")
@@ -483,8 +489,10 @@ class BroadcastChannel:
             Uses coordination tracker's forward mapping to resolve anonymous IDs.
             Invalid anonymous IDs are filtered out (not included in result).
         """
+        # Get forward mapping from coordination tracker (anonymous_id -> real_id)
         anon_to_real = self.orchestrator.coordination_tracker.get_anonymous_agent_mapping()
 
+        # Map anonymous IDs to real IDs, filtering out invalid ones
         real_ids = []
         for anon_id in anonymous_ids:
             real_id = anon_to_real.get(anon_id)
