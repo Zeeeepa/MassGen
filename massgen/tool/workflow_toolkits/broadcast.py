@@ -425,6 +425,7 @@ class BroadcastToolkit(BaseToolkit):
         request_id = await self.orchestrator.broadcast_channel.create_broadcast(
             sender_agent_id=agent_id,
             question=question,
+            target_agents=target_agents,
         )
         await self.orchestrator.broadcast_channel.inject_into_agents(request_id)
 
@@ -493,10 +494,24 @@ class BroadcastToolkit(BaseToolkit):
         Returns:
             JSON string with broadcast responses
         """
+        from loguru import logger
+
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
         request_id = args.get("request_id", "")
 
         responses = self.orchestrator.broadcast_channel.get_broadcast_responses(request_id)
+
+        # Clean up broadcast resources if completed or timed out
+        # This prevents resource leaks in polling mode
+        status = responses.get("status")
+        if status in ["completed", "timeout"]:
+            try:
+                await self.orchestrator.broadcast_channel.cleanup_broadcast(request_id)
+                logger.debug(f"📢 [{agent_id}] Cleaned up broadcast {request_id} (status: {status})")
+            except Exception as e:
+                # Don't fail the request if cleanup fails
+                logger.warning(f"📢 [{agent_id}] Failed to cleanup broadcast {request_id}: {e}")
+
         return json.dumps(responses)
 
     async def execute_respond_to_broadcast(self, arguments: str, agent_id: str) -> str:
