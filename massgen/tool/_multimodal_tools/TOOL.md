@@ -116,12 +116,12 @@ result = await understand_file(
 This is the recommended tool for all media generation. It automatically selects the best available backend based on:
 1. Explicit `backend_type` parameter
 2. Available API keys
-3. Modality-specific priority order (e.g., audio: ElevenLabs > OpenAI)
+3. Modality-specific priority order
 
 **Parameters:**
 - `prompt`: Text description of what to generate (or text to speak for audio)
 - `mode`: Type of media - `"image"`, `"video"`, or `"audio"`
-- `backend_type`: Preferred backend - `"auto"`, `"openai"`, `"google"`, `"openrouter"`, or `"elevenlabs"`
+- `backend_type`: Preferred backend - `"auto"`, `"openai"`, `"google"`, or `"openrouter"`
 - `model`: Override default model
 - `duration`: For video/audio, length in seconds
 - `voice`: For audio, voice ID (e.g., `"alloy"`, `"nova"`, `"shimmer"`)
@@ -133,7 +133,7 @@ This is the recommended tool for all media generation. It automatically selects 
 |------|----------|--------|
 | image | google, openai, openrouter | Imagen 3, GPT-4.1, Nano Banana |
 | video | google, openai | Veo 2, Sora-2 |
-| audio | elevenlabs, openai | eleven_multilingual_v2, gpt-4o-mini-tts |
+| audio | openai | gpt-4o-mini-tts |
 
 **Examples:**
 ```python
@@ -209,9 +209,6 @@ result = await text_to_file_generation(
 # Required for OpenAI backends (image, video, audio)
 export OPENAI_API_KEY="your-api-key"
 
-# Optional - for ElevenLabs audio generation
-export ELEVENLABS_API_KEY="your-api-key"
-
 # Optional - for Google backends (Imagen, Veo)
 export GOOGLE_API_KEY="your-api-key"
 # or
@@ -251,7 +248,7 @@ orchestrator:
   # Set default backends for all agents
   image_generation_backend: "openai"
   video_generation_backend: "openai"
-  audio_generation_backend: "elevenlabs"
+  audio_generation_backend: "openai"
 
   # Optionally set default models
   image_generation_model: "imagen-3.0-generate-002"
@@ -293,7 +290,7 @@ agents:
 |-------|--------------------------------|----------------|
 | image | google, openai, openrouter     | imagen-3.0-generate-002, gpt-5.2, gemini-2.5-flash-image-preview |
 | video | google, openai                 | veo-2.0-generate-001, sora-2 |
-| audio | elevenlabs, openai             | eleven_multilingual_v2, gpt-4o-mini-tts |
+| audio | openai                         | gpt-4o-mini-tts |
 
 ## Path Handling
 

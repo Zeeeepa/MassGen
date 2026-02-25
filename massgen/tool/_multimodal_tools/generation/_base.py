@@ -87,7 +87,6 @@ BACKEND_API_KEYS: dict[str, list[str]] = {
     "openai": ["OPENAI_API_KEY"],
     "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
-    "elevenlabs": ["ELEVENLABS_API_KEY"],
 }
 
 # Default models for each backend and media type
@@ -104,16 +103,13 @@ DEFAULT_MODELS: dict[str, dict[MediaType, str]] = {
     "openrouter": {
         MediaType.IMAGE: "google/gemini-2.5-flash-image-preview",
     },
-    "elevenlabs": {
-        MediaType.AUDIO: "eleven_multilingual_v2",
-    },
 }
 
 # Priority order for auto-selection per media type
 BACKEND_PRIORITY: dict[MediaType, list[str]] = {
     MediaType.IMAGE: ["openai", "google", "openrouter"],
     MediaType.VIDEO: ["openai", "google"],
-    MediaType.AUDIO: ["elevenlabs", "openai"],
+    MediaType.AUDIO: ["openai"],
 }
 
 
@@ -121,7 +117,7 @@ def has_api_key(backend_name: str) -> bool:
     """Check if the required API key for a backend is available.
 
     Args:
-        backend_name: Name of the backend ("openai", "google", "openrouter", "elevenlabs")
+        backend_name: Name of the backend ("openai", "google", "openrouter")
 
     Returns:
         True if at least one API key env var is set

@@ -304,7 +304,7 @@ async def generate_media(
                      - Relative paths resolved from agent workspace
                      - Absolute paths must be in allowed directories
                      - Defaults to agent workspace root
-        backend_type: Preferred backend ("openai", "google", "openrouter", "elevenlabs", or "auto")
+        backend_type: Preferred backend ("openai", "google", "openrouter", or "auto")
                       Falls back to others if unavailable
         model: Override the default model for the selected backend
         quality: Quality setting ("standard", "hd") - backend-specific
@@ -312,8 +312,9 @@ async def generate_media(
         voice: For audio: voice ID (e.g., "alloy", "echo", "nova", "shimmer")
         aspect_ratio: For image/video: aspect ratio (e.g., "16:9", "1:1")
         audio_format: For audio: output format (mp3, wav, opus, etc.)
-        audio_type: For audio: type of audio to generate - "speech" (default),
-                    "music" (ElevenLabs only), or "sound_effect" (ElevenLabs only)
+        audio_type: For audio: type of audio to generate.
+                    Currently only "speech" is supported. "music" and
+                    "sound_effect" are reserved and return an unsupported error.
         instructions: For audio: speaking instructions (tone, style)
         extra_params: Backend-specific parameters
         max_concurrent: Maximum concurrent generations for batch mode (default: 4)
@@ -351,28 +352,10 @@ async def generate_media(
             voice="nova"
         )
 
-        # Generate background music (ElevenLabs only)
-        generate_media(
-            prompt="Upbeat electronic track with synth leads",
-            mode="audio",
-            audio_type="music",
-            duration=30
-        )
-
-        # Generate sound effect (ElevenLabs only)
-        generate_media(
-            prompt="Thunder crack followed by rain",
-            mode="audio",
-            audio_type="sound_effect",
-            duration=5
-        )
-
     Supported Backends:
         Image: openai (GPT-4.1), google (Imagen), openrouter
         Video: google (Veo), openai (Sora-2)
-        Audio (speech): elevenlabs (eleven_multilingual_v2), openai (gpt-4o-mini-tts)
-        Audio (music): elevenlabs only
-        Audio (sound_effect): elevenlabs only
+        Audio (speech): openai (gpt-4o-mini-tts)
     """
     try:
         # Parse mode to MediaType

@@ -1,4 +1,4 @@
-"""Tests for audio generation backend selection and fallback behavior."""
+"""Tests for audio generation backend selection without ElevenLabs support."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,26 +15,10 @@ from massgen.tool._multimodal_tools.generation._base import (
 from massgen.tool._multimodal_tools.generation._selector import select_backend_and_model
 
 
-def test_audio_auto_selection_prefers_elevenlabs_when_key_is_present(monkeypatch: pytest.MonkeyPatch):
-    """Audio auto-selection should prefer ElevenLabs over OpenAI when both are available."""
+def test_audio_auto_selection_uses_openai(monkeypatch: pytest.MonkeyPatch):
+    """Audio auto-selection should choose OpenAI when API key is present."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs-key")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
-
-    backend, model = select_backend_and_model(
-        media_type=MediaType.AUDIO,
-        preferred_backend=None,
-        preferred_model=None,
-        config=None,
-    )
-
-    assert backend == "elevenlabs"
-    assert model == "eleven_multilingual_v2"
-
-
-def test_audio_auto_selection_falls_back_to_openai_when_no_elevenlabs_key(monkeypatch: pytest.MonkeyPatch):
-    """Audio auto-selection should use OpenAI when ElevenLabs API key is unavailable."""
-    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
 
     backend, model = select_backend_and_model(
         media_type=MediaType.AUDIO,
@@ -47,79 +31,83 @@ def test_audio_auto_selection_falls_back_to_openai_when_no_elevenlabs_key(monkey
     assert model == "gpt-4o-mini-tts"
 
 
+def test_audio_auto_selection_returns_none_without_openai(monkeypatch: pytest.MonkeyPatch):
+    """Audio auto-selection should fail when OpenAI API key is unavailable."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+    backend, model = select_backend_and_model(
+        media_type=MediaType.AUDIO,
+        preferred_backend=None,
+        preferred_model=None,
+        config=None,
+    )
+
+    assert backend is None
+    assert model is None
+
+
+def test_audio_preferred_elevenlabs_falls_back_to_openai(monkeypatch: pytest.MonkeyPatch):
+    """A preferred ElevenLabs backend should gracefully fall back to OpenAI."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs-key")
+
+    backend, model = select_backend_and_model(
+        media_type=MediaType.AUDIO,
+        preferred_backend="elevenlabs",
+        preferred_model=None,
+        config=None,
+    )
+
+    assert backend == "openai"
+    assert model == "gpt-4o-mini-tts"
+
+
 @pytest.mark.asyncio
-async def test_generate_audio_routes_to_elevenlabs_backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """generate_audio should route to ElevenLabs when explicitly requested."""
+async def test_generate_audio_routes_to_openai_backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """generate_audio should route speech generation to OpenAI backend."""
     config = GenerationConfig(
         prompt="hello world",
         output_path=tmp_path / "hello.mp3",
         media_type=MediaType.AUDIO,
-        backend="elevenlabs",
+        backend="openai",
     )
 
-    elevenlabs_result = GenerationResult(
-        success=True,
-        output_path=config.output_path,
-        media_type=MediaType.AUDIO,
-        backend_name="elevenlabs",
-        model_used="eleven_multilingual_v2",
-        file_size_bytes=1234,
-    )
-    mock_elevenlabs = AsyncMock(return_value=elevenlabs_result)
-    mock_openai = AsyncMock()
-
-    monkeypatch.setattr(audio_generation, "_generate_speech_elevenlabs", mock_elevenlabs)
-    monkeypatch.setattr(audio_generation, "_generate_audio_openai", mock_openai)
-
-    result = await audio_generation.generate_audio(config)
-
-    assert result.success is True
-    assert result.backend_name == "elevenlabs"
-    mock_elevenlabs.assert_awaited_once_with(config)
-    mock_openai.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_generate_audio_falls_back_to_openai_when_elevenlabs_fails(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-):
-    """If ElevenLabs fails, generate_audio should fall back to OpenAI when available."""
-    config = GenerationConfig(
-        prompt="hello world",
-        output_path=tmp_path / "hello.mp3",
-        media_type=MediaType.AUDIO,
-        backend="elevenlabs",
-    )
-
-    elevenlabs_failure = GenerationResult(
-        success=False,
-        backend_name="elevenlabs",
-        model_used="eleven_multilingual_v2",
-        error="ElevenLabs unavailable",
-    )
     openai_result = GenerationResult(
         success=True,
         output_path=config.output_path,
         media_type=MediaType.AUDIO,
         backend_name="openai",
         model_used="gpt-4o-mini-tts",
-        file_size_bytes=1000,
+        file_size_bytes=1234,
     )
-
-    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
-    mock_elevenlabs = AsyncMock(return_value=elevenlabs_failure)
     mock_openai = AsyncMock(return_value=openai_result)
 
-    monkeypatch.setattr(audio_generation, "_generate_speech_elevenlabs", mock_elevenlabs)
     monkeypatch.setattr(audio_generation, "_generate_audio_openai", mock_openai)
 
     result = await audio_generation.generate_audio(config)
 
     assert result.success is True
     assert result.backend_name == "openai"
-    mock_elevenlabs.assert_awaited_once_with(config)
     mock_openai.assert_awaited_once_with(config)
+
+
+@pytest.mark.asyncio
+async def test_generate_audio_rejects_elevenlabs_backend(tmp_path: Path):
+    """ElevenLabs backend should be explicitly rejected in this release."""
+    config = GenerationConfig(
+        prompt="hello world",
+        output_path=tmp_path / "hello.mp3",
+        media_type=MediaType.AUDIO,
+        backend="elevenlabs",
+    )
+
+    result = await audio_generation.generate_audio(config)
+
+    assert result.success is False
+    assert result.backend_name == "elevenlabs"
+    assert "not supported" in (result.error or "").lower()
+    assert "openai" in (result.error or "").lower()
 
 
 @pytest.mark.asyncio

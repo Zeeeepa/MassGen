@@ -5078,7 +5078,7 @@ class ConfigBuilder:
                 # Default generation backends (agents can override)
                 "image_generation_backend": "openai",  # OpenAI responses image gen
                 "video_generation_backend": "openai",  # OpenAI Sora2
-                "audio_generation_backend": "elevenlabs",  # Prefer ElevenLabs TTS (falls back to OpenAI when unavailable)
+                "audio_generation_backend": "openai",  # OpenAI TTS
                 "coordination": {
                     "max_orchestration_restarts": 0,  # Disabled pending MAS-268 fix
                     "use_skills": True,
@@ -5104,7 +5104,7 @@ class ConfigBuilder:
                 # Default generation backends (agents can override)
                 "image_generation_backend": "openai",  # OpenAI image generation
                 "video_generation_backend": "openai",  # OpenAI video generation
-                "audio_generation_backend": "elevenlabs",  # Prefer ElevenLabs TTS (falls back to OpenAI when unavailable)
+                "audio_generation_backend": "openai",  # OpenAI TTS
                 "coordination": {
                     "max_orchestration_restarts": 0,  # Disabled pending MAS-268 fix
                     "enable_agent_task_planning": True,
