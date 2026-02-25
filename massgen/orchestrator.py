@@ -666,6 +666,9 @@ class Orchestrator(ChatAgent):
                 _metadata = plan_session.load_metadata()
                 _artifact_type = getattr(_metadata, "artifact_type", "plan")
             except Exception:
+                logger.opt(exception=True).warning(
+                    f"[Orchestrator] Could not load artifact_type from metadata for " f"plan_session={self._plan_session_id}; defaulting to 'plan'. " f"This may cause incorrect workspace seeding.",
+                )
                 _artifact_type = "plan"
 
             if _artifact_type == "spec":
@@ -7394,7 +7397,9 @@ Your answer:"""
                                 log_path=None,
                             )
                         except Exception:
-                            pass
+                            logger.opt(exception=True).warning(
+                                f"[Orchestrator] Failed to notify TUI of continued subagent " f"{subagent_id} for parent {parent_agent_id}",
+                            )
 
                 logger.info(
                     f"[Orchestrator] Continue request dispatched for subagent {subagent_id} via {parent_agent_id}",
@@ -12091,7 +12096,9 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 _pm = _ps.load_metadata()
                 _presenter_artifact_type = getattr(_pm, "artifact_type", None)
             except Exception:
-                pass
+                logger.opt(exception=True).warning(
+                    f"[Orchestrator] Could not load artifact_type for presenter agent " f"(plan_session={self._plan_session_id}); artifact type context will be omitted.",
+                )
 
         base_system_message = self._get_system_message_builder().build_presentation_message(
             agent=agent,

@@ -187,6 +187,5 @@ class TestComputePlanDiffForSpec:
         storage.finalize_planning_phase(session, spec_workspace)
 
         diff = session.compute_plan_diff()
-        # Spec sessions don't have plan.json, so diff should indicate this
-        assert "info" in diff or "error" in diff
-        # Should NOT crash
+        # Spec sessions don't have plan.json, so diff must return the sentinel value
+        assert diff == {"info": "spec_session_no_diff"}

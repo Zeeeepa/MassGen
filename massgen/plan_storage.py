@@ -363,7 +363,10 @@ class PlanStorage:
                                 seen.add(chunk)
                                 chunks.append(chunk)
                         metadata.chunk_order = chunks
-                    except (json.JSONDecodeError, KeyError):
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(
+                            f"[PlanStorage] Failed to parse chunk order from spec.json: {e}. " f"chunk_order will be empty.",
+                        )
                         metadata.chunk_order = []
                 else:
                     metadata.chunk_order = []

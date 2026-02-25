@@ -1721,7 +1721,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             for item in session_dir.iterdir():
                 if item.is_dir() and item.name.startswith("turn_"):
                     return True
-        except OSError:
+        except OSError as e:
+            logger.debug(
+                f"[SubagentManager] OSError checking session turns for {session_dir}: {e}",
+            )
             return False
 
         return False
@@ -2363,6 +2366,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         current_state.result = result
                         current_state.finished_at = datetime.now()
                 except Exception as e:
+                    logger.opt(exception=True).error(
+                        f"[SubagentManager] Background continue failed for {normalized_id}: {e}",
+                    )
                     current_state = self._subagents.get(normalized_id)
                     workspace_path = current_state.workspace_path if current_state and current_state.workspace_path else workspace_hint
                     result = SubagentResult.create_error(

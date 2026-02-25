@@ -322,10 +322,10 @@ class TestCriticChecklistGuidance:
                 "decision_space_exhausted": False,
             },
         )
-        # When verdict is new_answer and both are enabled, should mention critic
-        if result.get("verdict") == "new_answer":
-            explanation = result.get("explanation", "")
-            assert "critic" in explanation.lower()
+        # When scores are below threshold, verdict must be new_answer and mention critic
+        assert result.get("verdict") == "new_answer", f"Expected 'new_answer' but got {result.get('verdict')!r}; full result: {result}"
+        explanation = result.get("explanation", "")
+        assert "critic" in explanation.lower()
 
 
 # ===========================================================================

@@ -358,8 +358,8 @@ async def read_media(
                         f"Unsupported file type: {media_path.suffix}. " "Supported: images (png, jpg, webp), audio (mp3, wav, m4a, ogg), video (mp4, mov, avi, mkv, webm, gif)",
                     )
             else:
-                # Follow-up without new file — assume image (the stored conversation type)
-                media_type = "image"
+                # Follow-up without new file — use stored conversation's media type
+                media_type = conv_state.get("media_type", "image") if conv_state else "image"
                 media_path = None
 
             logger.info(f"Using understand_{media_type} for {media_type} analysis")
@@ -400,6 +400,7 @@ async def read_media(
 
                             # Save conversation state for future follow-ups
                             new_state: dict[str, Any] = {
+                                "media_type": "image",
                                 "backend_type": backend_type,
                                 "response_id": data.get("response_id"),
                                 "model": image_kwargs["model"],
@@ -422,8 +423,10 @@ async def read_media(
                             _conversation_store.save(conversation_id, new_state)
 
                             block.data = json.dumps(data, indent=2)
-                        except (json.JSONDecodeError, AttributeError):
-                            pass
+                        except (json.JSONDecodeError, AttributeError) as e:
+                            logger.warning(
+                                f"[read_media] Could not inject conversation_id into image result " f"block (parse failed: {e}). Follow-up calls with continue_from " f"will not work.",
+                            )
                 return result
 
             elif media_type == "audio":
@@ -450,8 +453,10 @@ async def read_media(
                                 data = json.loads(block.data)
                                 data["warning"] = context_warning
                                 block.data = json.dumps(data, indent=2)
-                            except (json.JSONDecodeError, AttributeError):
-                                pass
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                logger.warning(
+                                    f"[read_media] Could not inject context warning into audio " f"result block (parse failed: {e}).",
+                                )
                 return result
 
             elif media_type == "video":
@@ -479,8 +484,10 @@ async def read_media(
                                 data = json.loads(block.data)
                                 data["warning"] = context_warning
                                 block.data = json.dumps(data, indent=2)
-                            except (json.JSONDecodeError, AttributeError):
-                                pass
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                logger.warning(
+                                    f"[read_media] Could not inject context warning into video " f"result block (parse failed: {e}).",
+                                )
                 return result
 
         # ------------------------------------------------------------------

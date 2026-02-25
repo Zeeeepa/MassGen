@@ -898,8 +898,8 @@ def build_spec_execution_prompt(
     """
     try:
         spec_data = _load_frozen_spec(plan_session)
-    except FileNotFoundError:
-        return f"# SPEC EXECUTION MODE\n\nError: spec.json not found.\n\n{question}"
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        return f"# SPEC EXECUTION MODE\n\nError: spec.json could not be loaded: {e}\n\n{question}"
 
     requirements = spec_data.get("requirements", [])
 
@@ -1001,6 +1001,10 @@ def setup_agent_workspaces_for_spec_execution(
         chunk_order = metadata.chunk_order or []
         completed_chunks = metadata.completed_chunks or []
     except Exception:
+        logger.warning(
+            "[SpecExecution] Could not load chunk metadata for spec workspace seeding; " "chunk_order and completed_chunks will be empty. Agents may re-execute " "completed chunks.",
+            exc_info=True,
+        )
         chunk_order = []
         completed_chunks = []
 
