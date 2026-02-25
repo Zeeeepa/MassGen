@@ -190,9 +190,9 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.56 (February 25, 2026)** - Critic Subagent & Spec Plan Mode
+**v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
 
-Critic subagent for honest, unbiased quality assessment detecting genuine vs incremental improvement. Spec plan mode for formal requirements specification before execution. Audio multimodal support (understand + generate). Targeted agent-to-agent messaging.
+Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging via `target_agents` parameter. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
 
 **v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
 

@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
-**v0.1.56 (February 25, 2026)** - Critic Subagent & Spec Plan Mode
-Critic subagent for honest, unbiased quality assessment detecting genuine vs incremental improvement. Spec plan mode for formal requirements specification before execution. Audio multimodal support (understand + generate). Targeted agent-to-agent messaging. Media conversation continuity. Codex OAuth login.
+**v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
+Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
 
 **v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
 Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
@@ -47,8 +47,8 @@ Runtime messaging to steer running background subagents. New GitHub Copilot back
   - Validation and per-target response counting
   - Shadow-agent prompt improvements for prior work separation
 
-- **Codex OAuth Login** ([#937](https://github.com/massgen/MassGen/pull/937), MAS-322): Codex backend always available in WebUI regardless of OPENAI_API_KEY
-  - OAuth authentication via `codex login`
+- **Codex OAuth Login Fix** ([#937](https://github.com/massgen/MassGen/pull/937), MAS-322): Codex backend always available in WebUI regardless of OPENAI_API_KEY
+  - OAuth authentication fix via `codex login`
 
 - **Background Subagent Continuation** ([#945](https://github.com/massgen/MassGen/pull/945)): Non-blocking subagent task execution
   - Enhanced subagent state tracking and graceful cancellation
@@ -75,7 +75,7 @@ Runtime messaging to steer running background subagents. New GitHub Copilot back
 - New `ROADMAP_v0.1.57.md` - Next release roadmap
 
 ### Technical Details
-- **Major Focus**: Critic subagent, spec plan mode, audio multimodal, targeted messaging
+- **Major Focus**: Spec plan mode, targeted messaging, critic subagent
 - **PRs Merged**: [#945](https://github.com/massgen/MassGen/pull/945) (Spec mode, critic subagent, audio multimodal), [#937](https://github.com/massgen/MassGen/pull/937) (Codex OAuth, ask_others targeting)
 - **Files Changed**: 89 files, +8684/-1089 lines
 - **New Tests**: 16 new test files covering spec execution, spec storage, spec approval modal, audio multimodal, read_media analysis/followup, refinement quality, and more

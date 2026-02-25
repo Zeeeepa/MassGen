@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.56, adding Critic Subagent & Spec Plan Mode! 🚀 A new critic subagent type for honest, unbiased quality assessment that detects genuine vs incremental improvement. Spec plan mode adds formal requirements specification before execution. Plus: audio multimodal support (understand + generate), targeted agent-to-agent messaging, media conversation continuity, and Codex OAuth login.
+We're excited to release MassGen v0.1.56, adding Spec Plan Mode! 🚀 A new formal requirements specification workflow before execution with TUI spec mode support. Plus: critic subagent for quality assessment, targeted agent-to-agent messaging, media conversation continuity, and Codex OAuth login fix.
 
 ## Install
 
@@ -29,25 +29,20 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.56, adding Critic Subagent & Spec Plan Mode! 🚀 A new critic subagent type for honest, unbiased quality assessment that detects genuine vs incremental improvement. Spec plan mode adds formal requirements specification before execution. Plus: audio multimodal support (understand + generate), targeted agent-to-agent messaging, media conversation continuity, and Codex OAuth login.
+We're excited to release MassGen v0.1.56, adding Spec Plan Mode! 🚀 A new formal requirements specification workflow before execution with TUI spec mode support. Plus: critic subagent for quality assessment, targeted agent-to-agent messaging, media conversation continuity, and Codex OAuth login fix.
 
 **Key Features:**
-
-**Critic Subagent** - New subagent type for honest quality assessment:
-- Detects genuine vs incremental improvement across refinement rounds
-- Unbiased evaluation independent of the agent that produced the work
-- Complements existing subagent types (evaluator, explorer, researcher, novelty)
 
 **Spec Plan Mode** - Formal requirements specification before execution:
 - `plan_mode="spec"` for structured requirements gathering
 - Ensures agents understand and agree on deliverables before coding begins
-- Adds more guidance for growth-oriented refinement
+- Spec creation, approval modal, and dedicated TUI spec mode state
 
 **Also in this release:**
-- Audio Multimodal: Audio understanding (Gemini native + Whisper fallback) and generation (OpenAI TTS) via `read_media` and `generate_media`
+- Critic Subagent: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
 - ask_others Targeting: `target_agents` parameter for focused agent-to-agent communication instead of broadcast
 - read_media Continue: Follow-up conversations on media via `continue_from` conversation_id
-- Codex OAuth Login: OAuth authentication for Codex backend in web UI
+- Codex OAuth Login Fix: OAuth authentication fix for Codex backend in web UI
 
 **Bug Fixes:**
 - Test and spec reading fixes

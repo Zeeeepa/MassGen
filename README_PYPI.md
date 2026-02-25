@@ -159,10 +159,10 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: February 25, 2026**
 
 **What's New in v0.1.56:**
-- **🔍 Critic Subagent** - New subagent type for honest, unbiased quality assessment. Detects genuine vs incremental improvement across refinement rounds.
 - **📋 Spec Plan Mode** - `plan_mode="spec"` for formal requirements specification before execution with TUI spec mode support.
-- **🔊 Audio Multimodal** - Audio understanding (Gemini native + Whisper fallback) and generation (OpenAI TTS) via `read_media` and `generate_media`.
 - **🎯 ask_others Targeting** - `target_agents` parameter for focused agent-to-agent communication instead of broadcast.
+- **🔍 Critic Subagent** - New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement.
+- **🔧 Codex OAuth Login Fix** - Codex backend always available in WebUI regardless of OPENAI_API_KEY.
 
 **Try v0.1.56 Features:**
 ```bash
@@ -1236,25 +1236,19 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 **🎉 Released: February 25, 2026**
 
-#### Critic Subagent
-- **Honest Quality Assessment**: New subagent type that detects genuine vs incremental improvement across refinement rounds
-- **Deep Evaluation**: First impression, quality ceiling assessment, incrementalism verdict, independent E-criterion scoring
-- **Excellence Vision**: Describes the 10/10 vision and distance to excellence
-
 #### Spec Plan Mode
 - **Formal Requirements**: `plan_mode="spec"` for structured requirements specification before execution
 - **TUI Integration**: Spec creation, approval modal, and dedicated TUI spec mode state
+- **Changedoc Integration**: Spec storage and change document workflow
 
-#### Audio Multimodal Support
-- **Audio Understanding**: Gemini native + Whisper fallback for audio analysis via `read_media`
-- **Audio Generation**: OpenAI TTS via unified `generate_media` tool
-- **Backend Routing**: Backend-specific audio routing with capability detection
+#### ask_others Targeted Messaging
+- **Targeted Communication**: `target_agents` parameter for focused agent-to-agent communication instead of broadcast
+- **Validation**: Per-target response counting and shadow-agent prompt improvements
 
 #### Also in this release
-- **ask_others Targeted Messaging**: `target_agents` parameter for focused agent-to-agent communication
+- **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
 - **read_media Conversation Continuity**: Follow-up conversations on media via `continue_from` conversation_id
-- **Codex OAuth Login**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
-- **Unified generate_media Tool**: Consolidated media generation across image, audio, and video modalities
+- **Codex OAuth Login Fix**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
 
 #### Bug Fixes
 - Spec reading and test fixes

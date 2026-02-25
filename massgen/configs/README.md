@@ -228,15 +228,14 @@ Most configurations use environment variables for API keys:so
 ## Release History & Examples
 
 ### v0.1.56 - Latest
-**New Features:** Critic Subagent, Spec Plan Mode, Audio Multimodal Support, ask_others Targeting
+**New Features:** Spec Plan Mode, ask_others Targeting, Critic Subagent, Codex OAuth Login Fix
 
 **Key Features:**
-- **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
 - **Spec Plan Mode**: `plan_mode="spec"` for formal requirements specification before execution with TUI spec mode support
-- **Audio Multimodal Support**: Audio understanding (Gemini native + Whisper fallback) and generation (OpenAI TTS) via `read_media` and `generate_media`
 - **ask_others Targeted Messaging**: `target_agents` parameter for focused agent-to-agent communication
+- **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
 - **read_media Conversation Continuity**: Follow-up conversations on media via `continue_from` conversation_id
-- **Codex OAuth Login**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
+- **Codex OAuth Login Fix**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
 
 **Try It:**
 ```bash
