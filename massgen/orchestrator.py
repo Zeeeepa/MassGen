@@ -5665,28 +5665,36 @@ Your answer:"""
         return timestamp
 
     def _compute_plan_progress_stats(self, workspace_path: str) -> dict[str, Any] | None:
-        """Compute task progress stats for an agent's workspace (plan execution mode only).
+        """Compute task/requirement progress stats for an agent's workspace.
 
-        This reads the agent's tasks/plan.json and computes how many tasks are completed
-        vs total. Only works in plan-and-execute mode where tasks/plan.json exists.
+        Reads the agent's tasks/plan.json or tasks/spec.json and computes how
+        many items are completed vs total.  Works in both plan-and-execute mode
+        and spec execution mode.
 
         Args:
             workspace_path: Path to the agent's workspace (temp workspace copy)
 
         Returns:
-            Dict with progress stats, or None if not in plan execution mode or files missing
+            Dict with progress stats, or None if not in execution mode or files missing
         """
         try:
             workspace = Path(workspace_path)
             tasks_plan = workspace / "tasks" / "plan.json"
+            tasks_spec = workspace / "tasks" / "spec.json"
 
-            # Check if this is plan execution mode (has tasks/plan.json)
-            if not tasks_plan.exists():
+            # Check for plan.json first, then spec.json
+            if tasks_plan.exists():
+                artifact_file = tasks_plan
+                items_key = "tasks"
+            elif tasks_spec.exists():
+                artifact_file = tasks_spec
+                items_key = "requirements"
+            else:
                 return None
 
-            # Read task plan
-            tasks_data = json.loads(tasks_plan.read_text())
-            tasks = tasks_data.get("tasks", [])
+            # Read artifact
+            tasks_data = json.loads(artifact_file.read_text())
+            tasks = tasks_data.get(items_key, [])
             total_tasks = len(tasks)
 
             if total_tasks == 0:

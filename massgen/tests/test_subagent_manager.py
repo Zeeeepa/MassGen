@@ -1304,6 +1304,7 @@ class TestContinueSubagent:
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
         monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_session_has_saved_turns", lambda *args, **kwargs: True)
         monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, "sess-new"))
         monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
 

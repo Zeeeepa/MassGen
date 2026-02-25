@@ -296,6 +296,7 @@ async def call_claude_code(
 async def call_codex(
     loaded_images: list[LoadedImage],
     prompt: str,
+    model: str | None = None,
     agent_cwd: str | None = None,
     system_prompt: str | None = None,
 ) -> tuple[str, None]:

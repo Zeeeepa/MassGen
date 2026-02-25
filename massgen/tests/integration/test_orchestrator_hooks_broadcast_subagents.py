@@ -111,6 +111,7 @@ async def test_round_timeout_hooks_integration_soft_then_hard_timeout(mock_orche
     orchestrator.config.timeout_config.subsequent_round_timeout_seconds = 1
     orchestrator.config.timeout_config.round_timeout_grace_seconds = 0
     orchestrator.config.coordination_config.use_two_tier_workspace = True
+    orchestrator.config.coordination_config.write_mode = "legacy"
     orchestrator.agent_states[agent_id].round_start_time = time.time() - 5
 
     captured = _capture_general_hook_manager(agent)
