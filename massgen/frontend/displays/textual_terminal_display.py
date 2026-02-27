@@ -456,6 +456,19 @@ def _build_subagent_display_data(
     elapsed_seconds = float(sa_data.get("execution_time_seconds") or (existing.elapsed_seconds if existing else 0.0))
     log_path = sa_data.get("log_path") or (existing.log_path if existing else None)
 
+    # Recalculate log_path when the server assigned a different ID than the
+    # placeholder used at card creation (e.g. "subagent_0" → "subagent_1").
+    # The stale log_path still points to the old ID's directory.
+    if log_path and existing and subagent_id != existing.id and not sa_data.get("log_path"):
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            session_dir = get_log_session_dir()
+            if session_dir:
+                log_path = str(session_dir / "subagents" / subagent_id)
+        except Exception:
+            pass
+
     error = sa_data.get("error")
     if not error and existing:
         error = existing.error
@@ -6557,7 +6570,7 @@ Type your question and press Enter to ask the agents.
             # Create SubagentDisplayData for each task (all pending/running)
             subagents = []
             for i, task_data in enumerate(tasks):
-                subagent_id = task_data.get("subagent_id", task_data.get("id", f"subagent_{i}"))
+                subagent_id = task_data.get("subagent_id", task_data.get("id", f"pending_{call_id}_{i}"))
                 task_desc = task_data.get("task", "")
                 log_path = str(subagent_logs_base / subagent_id) if subagent_logs_base else None
                 context_paths = _normalize_subagent_context_paths(task_data.get("context_paths", []))
@@ -12708,7 +12721,7 @@ Type your question and press Enter to ask the agents.
 
             # Build updated subagent list
             updated_subagents = []
-            for sa_data in spawned:
+            for idx, sa_data in enumerate(spawned):
                 subagent_id = str(sa_data.get("subagent_id") or sa_data.get("id") or "")
                 existing = None
                 if subagent_id:
@@ -12716,6 +12729,13 @@ Type your question and press Enter to ask the agents.
                         if candidate.id == subagent_id:
                             existing = candidate
                             break
+                # Positional fallback: card was created with placeholder IDs
+                # (e.g. "subagent_0") before the MCP server assigned real sequential
+                # IDs (e.g. "subagent_1").  subagent_type now flows directly from
+                # the spawn result, so this mainly preserves any other pre-existing
+                # display state (task text, etc.) when ID lookup fails.
+                if existing is None and idx < len(card.subagents):
+                    existing = card.subagents[idx]
                 updated_subagents.append(_build_subagent_display_data(sa_data, existing))
 
             if updated_subagents:

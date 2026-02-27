@@ -891,6 +891,123 @@ def test_subagent_column_focus_border_is_thin() -> None:
     assert "border-left: none" in block
 
 
+def test_update_subagent_card_preserves_type_when_server_assigns_different_id() -> None:
+    """subagent_type must survive when the MCP server assigns a different ID than
+    the placeholder used when the card was created.
+
+    Scenario: agent spawns one novelty subagent without an explicit subagent_id.
+    show_subagent_card_from_spawn creates the card with placeholder id="subagent_0"
+    (position index 0).  The MCP server assigns id="subagent_1" (globally
+    sequential).  _update_subagent_card_with_results must fall back to positional
+    matching so subagent_type="novelty" is not lost.
+    """
+    panel_cls = textual_display_module.AgentPanel
+    panel = panel_cls.__new__(panel_cls)
+
+    # Card created with placeholder id="subagent_0", subagent_type="novelty"
+    placeholder = _make_subagent("subagent_0", status="running", subagent_type="novelty")
+    card = _FakeCard([placeholder], tool_call_id="spawn_tool_99")
+    timeline = _FakeTimeline(card)
+
+    # Spawn result assigns id="subagent_1" (different from placeholder "subagent_0")
+    result_payload = {
+        "success": True,
+        "operation": "spawn_subagents",
+        "mode": "background",
+        "subagents": [
+            {
+                "subagent_id": "subagent_1",
+                "status": "running",
+                "workspace": "/tmp/ws",
+                "task": "You are a novelty subagent...",
+            },
+        ],
+    }
+
+    tool_data = SimpleNamespace(
+        tool_id="spawn_tool_99",
+        tool_name="mcp__subagent_agent_a__spawn_subagents",
+        result_full=json.dumps(result_payload),
+    )
+
+    panel._update_subagent_card_with_results(tool_data, timeline)
+
+    assert card.last_update is not None
+    updated = card.last_update[0]
+    assert updated.id == "subagent_1"
+    assert updated.subagent_type == "novelty", (
+        "subagent_type should be preserved via positional fallback " f"when server assigns id='subagent_1' but card placeholder was 'subagent_0'; " f"got subagent_type={updated.subagent_type!r}"
+    )
+
+
+def test_progress_bar_shows_launching_state_when_elapsed_is_zero_and_running() -> None:
+    """Running subagent with no elapsed time should show a launching indicator, not 0%."""
+    subagent = _make_subagent("sub_launching", status="running", elapsed_seconds=0.0, timeout_seconds=300.0)
+    column = SubagentColumn(
+        subagent=subagent,
+        all_subagents=[subagent],
+        summary="running",
+        tools=[],
+        open_callback=lambda _s, _a: None,
+    )
+    bar = column._build_progress_bar()
+    assert "0%" not in bar.plain
+    assert "setting up" in bar.plain.lower()
+
+
+def test_progress_bar_shows_normal_progress_once_elapsed_is_positive() -> None:
+    """Running subagent with positive elapsed should show normal percentage progress."""
+    subagent = _make_subagent("sub_active", status="running", elapsed_seconds=30.0, timeout_seconds=300.0)
+    column = SubagentColumn(
+        subagent=subagent,
+        all_subagents=[subagent],
+        summary="running",
+        tools=[],
+        open_callback=lambda _s, _a: None,
+    )
+    bar = column._build_progress_bar()
+    assert "10%" in bar.plain
+
+
+def test_subagent_card_should_activate_returns_false_when_log_path_is_none() -> None:
+    """Activation check should return False when log_path is not set."""
+    sa = _make_subagent("sub_no_log", status="running")
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_none")
+    assert not card._should_activate(sa)
+
+
+def test_subagent_card_should_activate_returns_false_when_events_file_missing(tmp_path: Path) -> None:
+    """Activation check should return False when events file does not yet exist."""
+    log_dir = tmp_path / "sub_logs" / "sub_1"
+    log_dir.mkdir(parents=True)
+    sa = _make_subagent("sub_no_events", status="running")
+    sa.log_path = str(log_dir)
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_missing")
+    assert not card._should_activate(sa)
+
+
+def test_subagent_card_should_activate_returns_true_when_events_file_has_content(tmp_path: Path) -> None:
+    """Activation check should return True when events file exists and has content."""
+    log_dir = tmp_path / "sub_logs" / "sub_2"
+    (log_dir / "full_logs").mkdir(parents=True)
+    (log_dir / "full_logs" / "events.jsonl").write_text('{"event_type": "round_start"}\n')
+    sa = _make_subagent("sub_with_events", status="running")
+    sa.log_path = str(log_dir)
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_events")
+    assert card._should_activate(sa)
+
+
+def test_subagent_card_should_activate_returns_false_when_events_file_is_empty(tmp_path: Path) -> None:
+    """Activation check should return False when events file exists but is empty."""
+    log_dir = tmp_path / "sub_logs" / "sub_3"
+    (log_dir / "full_logs").mkdir(parents=True)
+    (log_dir / "full_logs" / "events.jsonl").write_text("")
+    sa = _make_subagent("sub_empty_events", status="running")
+    sa.log_path = str(log_dir)
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_empty")
+    assert not card._should_activate(sa)
+
+
 def test_subagent_card_variant_a_uses_single_thin_left_rail() -> None:
     """Option A should avoid stacked thick rails on the left edge."""
     css = Path("massgen/frontend/displays/textual_themes/base.tcss").read_text(encoding="utf-8")
@@ -905,3 +1022,113 @@ def test_subagent_card_variant_a_uses_single_thin_left_rail() -> None:
     assert focus_match is not None
     focus_block = focus_match.group(1)
     assert "border-left: solid" in focus_block
+
+
+# ---------------------------------------------------------------------------
+# log_path / placeholder-ID correctness
+# ---------------------------------------------------------------------------
+
+
+def test_build_subagent_display_data_recalculates_log_path_when_id_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """log_path must be recalculated when the server assigns a different ID
+    than the placeholder used at card creation time."""
+    session_log_dir = tmp_path / "logs" / "session_abc"
+    session_log_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "massgen.logger_config.get_log_session_dir",
+        lambda: session_log_dir,
+    )
+
+    existing = _make_subagent("subagent_0", status="running")
+    existing.log_path = str(session_log_dir / "subagents" / "subagent_0")
+
+    updated = textual_display_module._build_subagent_display_data(
+        {
+            "subagent_id": "subagent_1",
+            "status": "running",
+            "execution_time_seconds": 2.0,
+        },
+        existing,
+    )
+
+    assert updated.id == "subagent_1"
+    expected_log_path = str(session_log_dir / "subagents" / "subagent_1")
+    assert updated.log_path == expected_log_path
+
+
+def test_build_subagent_display_data_keeps_log_path_when_id_unchanged(
+    tmp_path: Path,
+) -> None:
+    """log_path should be preserved when the subagent ID stays the same."""
+    existing = _make_subagent("evaluator_v1", status="running")
+    existing.log_path = str(tmp_path / "subagents" / "evaluator_v1")
+
+    updated = textual_display_module._build_subagent_display_data(
+        {
+            "subagent_id": "evaluator_v1",
+            "status": "completed",
+            "execution_time_seconds": 5.0,
+            "answer": "Done.",
+        },
+        existing,
+    )
+
+    assert updated.id == "evaluator_v1"
+    assert updated.log_path == str(tmp_path / "subagents" / "evaluator_v1")
+
+
+def test_build_subagent_display_data_explicit_log_path_wins(
+    tmp_path: Path,
+) -> None:
+    """Explicit log_path from result overrides recalculation even when ID changes."""
+    existing = _make_subagent("subagent_0", status="running")
+    existing.log_path = str(tmp_path / "subagents" / "subagent_0")
+
+    explicit_path = str(tmp_path / "custom_logs" / "subagent_1")
+    updated = textual_display_module._build_subagent_display_data(
+        {
+            "subagent_id": "subagent_1",
+            "status": "completed",
+            "log_path": explicit_path,
+        },
+        existing,
+    )
+
+    assert updated.id == "subagent_1"
+    assert updated.log_path == explicit_path
+
+
+def test_show_subagent_card_from_spawn_unique_placeholder_ids(monkeypatch) -> None:
+    """Auto-generated placeholder IDs should be unique across spawn calls."""
+    timeline = _SpawnTimeline(existing_cards=[])
+    panel = _SpawnPanel(timeline, current_round=1)
+
+    app_cls = textual_display_module.TextualApp
+    app = app_cls.__new__(app_cls)
+    app.agent_widgets = {"agent_a": panel}
+    app._build_spawn_status_callback = lambda agent_id, seed_subagents, card=None: None
+
+    monkeypatch.setattr(textual_display_module, "get_log_session_dir", lambda: None)
+
+    # First spawn (no subagent_id provided)
+    app.show_subagent_card_from_spawn(
+        agent_id="agent_a",
+        args={"tasks": [{"task": "First task", "subagent_type": "novelty"}]},
+        call_id="call_1",
+    )
+
+    # Second spawn (no subagent_id provided)
+    app.show_subagent_card_from_spawn(
+        agent_id="agent_a",
+        args={"tasks": [{"task": "Second task", "subagent_type": "evaluator"}]},
+        call_id="call_2",
+    )
+
+    assert len(timeline.added_cards) == 2
+    id_1 = timeline.added_cards[0].subagents[0].id
+    id_2 = timeline.added_cards[1].subagents[0].id
+    assert id_1 != id_2, f"Placeholder IDs should be unique across spawn calls, " f"but both got '{id_1}'"
