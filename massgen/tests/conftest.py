@@ -77,6 +77,8 @@ def _isolate_test_logs(tmp_path_factory: pytest.TempPathFactory):
     try:
         import massgen.logger_config as logger_config
 
+        session = logger_config.LoggingSession.create()
+        logger_config.set_current_session(session)
         logger_config.reset_logging_session()
     except Exception:
         pass
@@ -88,6 +90,7 @@ def _isolate_test_logs(tmp_path_factory: pytest.TempPathFactory):
             import massgen.logger_config as logger_config
 
             logger_config.reset_logging_session()
+            logger_config._current_session.set(None)
         except Exception:
             pass
 
@@ -160,6 +163,14 @@ class MockLLMBackend:
             "tool_call_id": tool_call_id,
             "content": result,
         }
+
+    def filter_enforcement_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        unknown_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Default: return all calls (mock represents a non-Claude backend)."""
+        return tool_calls
 
     async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, **kwargs):
         from massgen.backend.base import StreamChunk

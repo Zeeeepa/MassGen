@@ -9,11 +9,58 @@ This module provides functionality to:
 
 import json
 import logging
+import os
+import sys
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_THREAD_LOCKS: dict[str, threading.RLock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _get_thread_lock(lock_path: Path) -> threading.RLock:
+    """Return a stable in-process lock for a given registry lock path."""
+    key = str(lock_path)
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _THREAD_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def _registry_lock(lock_path: Path, exclusive: bool):
+    """Cross-process file lock using fcntl (POSIX) or a no-op on Windows.
+
+    Args:
+        lock_path: Path to the lock sidecar file.
+        exclusive: If True, acquire an exclusive write lock; otherwise shared read lock.
+    """
+    # Protect threads inside the same process regardless of OS-level lock behavior.
+    thread_lock = _get_thread_lock(lock_path)
+    with thread_lock:
+        if sys.platform == "win32":
+            # Windows: no fcntl available in stdlib; thread lock still prevents
+            # in-process corruption.
+            yield
+            return
+
+        import fcntl
+
+        # Use append mode so creating/opening the lock file never truncates it.
+        lock_file = open(lock_path, "a+")
+        try:
+            flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            fcntl.flock(lock_file.fileno(), flag)
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
 
 
 class SessionRegistry:
@@ -45,27 +92,71 @@ class SessionRegistry:
         self._ensure_registry_exists()
 
     def _ensure_registry_exists(self) -> None:
-        """Create registry file if it doesn't exist."""
-        if not self.registry_path.exists():
-            self.registry_path.write_text(json.dumps({"sessions": []}, indent=2))
-            logger.debug(f"Created session registry at {self.registry_path}")
-
-    def _load_registry(self) -> dict[str, list[dict[str, Any]]]:
-        """Load registry from disk."""
+        """Create registry file if it doesn't exist, without clobbering existing data."""
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.registry_path) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Failed to load session registry: {e}. Creating new registry.")
-            return {"sessions": []}
+            with open(self.registry_path, "x") as f:
+                json.dump({"sessions": []}, f, indent=2)
+            logger.debug(f"Created session registry at {self.registry_path}")
+        except FileExistsError:
+            # Another thread/process already created the registry.
+            pass
+
+    @property
+    def _lock_path(self) -> Path:
+        return self.registry_path.with_suffix(".lock")
+
+    def _load_registry(self, _already_locked: bool = False) -> dict[str, list[dict[str, Any]]]:
+        """Load registry from disk.
+
+        When called from within ``_update_registry`` the caller already holds
+        the exclusive lock; pass ``_already_locked=True`` to skip re-locking.
+        For standalone read-only access a shared lock is acquired automatically.
+        """
+
+        def _read() -> dict:
+            try:
+                with open(self.registry_path) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(f"Failed to load session registry: {e}. Creating new registry.")
+                return {"sessions": []}
+
+        if _already_locked:
+            return _read()
+
+        try:
+            with _registry_lock(self._lock_path, exclusive=False):
+                return _read()
+        except OSError:
+            return _read()  # Fallback if lock unavailable
 
     def _save_registry(self, data: dict[str, list[dict[str, Any]]]) -> None:
-        """Save registry to disk."""
+        """Save registry to disk (no lock — callers must hold a lock themselves)."""
         try:
-            with open(self.registry_path, "w") as f:
+            tmp_path = self.registry_path.with_suffix(f"{self.registry_path.suffix}.tmp")
+            with open(tmp_path, "w") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_path.replace(self.registry_path)
         except OSError as e:
             logger.error(f"Failed to save session registry: {e}")
+
+    def _update_registry(self, update_fn):
+        """Atomically read-modify-write the registry under an exclusive lock.
+
+        Args:
+            update_fn: Callable that takes the loaded registry dict and returns
+                the modified dict to persist.  It must not perform I/O itself.
+        """
+        try:
+            with _registry_lock(self._lock_path, exclusive=True):
+                data = self._load_registry(_already_locked=True)
+                updated = update_fn(data)
+                self._save_registry(updated)
+        except OSError as e:
+            logger.error(f"Failed to update session registry: {e}")
 
     def register_session(
         self,
@@ -88,46 +179,46 @@ class SessionRegistry:
             parent_session_id: Parent session ID if this is a subagent session
             **metadata: Additional metadata to store
         """
-        registry = self._load_registry()
 
-        # Check if session already exists
-        existing_session = None
-        for session in registry["sessions"]:
-            if session["session_id"] == session_id:
-                existing_session = session
-                break
+        def _do_register(registry: dict) -> dict:
+            # Check if session already exists
+            existing_session = None
+            for s in registry["sessions"]:
+                if s["session_id"] == session_id:
+                    existing_session = s
+                    break
 
-        if existing_session:
-            # Update existing session
-            existing_session.update(
-                {
+            if existing_session:
+                existing_session.update(
+                    {
+                        "config_path": config_path,
+                        "model": model,
+                        "description": description,
+                        "subagent": subagent,
+                        "parent_session_id": parent_session_id,
+                        **metadata,
+                    },
+                )
+                logger.debug(f"Updated existing session: {session_id}")
+            else:
+                new_session = {
+                    "session_id": session_id,
+                    "start_time": datetime.now().isoformat(),
+                    "end_time": None,
+                    "status": "active",
                     "config_path": config_path,
                     "model": model,
                     "description": description,
                     "subagent": subagent,
                     "parent_session_id": parent_session_id,
                     **metadata,
-                },
-            )
-            logger.debug(f"Updated existing session: {session_id}")
-        else:
-            # Create new session
-            new_session = {
-                "session_id": session_id,
-                "start_time": datetime.now().isoformat(),
-                "end_time": None,
-                "status": "active",
-                "config_path": config_path,
-                "model": model,
-                "description": description,
-                "subagent": subagent,
-                "parent_session_id": parent_session_id,
-                **metadata,
-            }
-            registry["sessions"].append(new_session)
-            logger.info(f"Registered new session: {session_id}")
+                }
+                registry["sessions"].append(new_session)
+                logger.info(f"Registered new session: {session_id}")
 
-        self._save_registry(registry)
+            return registry
+
+        self._update_registry(_do_register)
 
     def complete_session(self, session_id: str) -> None:
         """Mark a session as completed.
@@ -135,16 +226,17 @@ class SessionRegistry:
         Args:
             session_id: Session to mark as completed
         """
-        registry = self._load_registry()
 
-        for session in registry["sessions"]:
-            if session["session_id"] == session_id:
-                session["end_time"] = datetime.now().isoformat()
-                session["status"] = "completed"
-                logger.info(f"Marked session as completed: {session_id}")
-                break
+        def _do_complete(registry: dict) -> dict:
+            for s in registry["sessions"]:
+                if s["session_id"] == session_id:
+                    s["end_time"] = datetime.now().isoformat()
+                    s["status"] = "completed"
+                    logger.info(f"Marked session as completed: {session_id}")
+                    break
+            return registry
 
-        self._save_registry(registry)
+        self._update_registry(_do_complete)
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         """Get metadata for a specific session.
