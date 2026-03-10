@@ -6293,6 +6293,66 @@ Your answer:"""
             f"[Orchestrator] Resume complete: restored {len(answer_snapshots)} snapshots, " f"agents will start at round {target_round + 1}",
         )
 
+    def _restore_workspace_from_latest_answer_dir(self, agent_id: str) -> bool:
+        """Restore an agent's workspace from its most recent per-round answer directory.
+
+        Used before final snapshot save in timeout/fallback paths where the live
+        workspace has been cleared between rounds and only has scaffolding.
+
+        Returns True if restoration happened, False otherwise.
+        """
+        agent = self.agents.get(agent_id)
+        if not agent or not agent.backend.filesystem_manager:
+            return False
+
+        log_session_dir = get_log_session_dir()
+        if not log_session_dir:
+            return False
+
+        agent_log_dir = log_session_dir / agent_id
+        if not agent_log_dir.exists():
+            return False
+
+        # Find all timestamped answer directories (format: YYYYMMDD_HHMMSS_ffffff)
+        # Sort descending to get most recent first
+        answer_dirs = sorted(
+            [d for d in agent_log_dir.iterdir() if d.is_dir() and d.name != "final" and (d / "workspace").is_dir()],
+            key=lambda d: d.name,
+            reverse=True,
+        )
+
+        if not answer_dirs:
+            return False
+
+        latest_workspace = answer_dirs[0] / "workspace"
+        workspace_path = Path(agent.backend.filesystem_manager.cwd)
+
+        # Copy items from the latest answer dir into the live workspace
+        # (non-overwriting — preserve anything already there)
+        items_restored = 0
+        for item in latest_workspace.iterdir():
+            if item.is_symlink():
+                continue
+            dest = workspace_path / item.name
+            if dest.exists():
+                continue
+            if item.is_file():
+                shutil.copy2(item, dest)
+                items_restored += 1
+            elif item.is_dir():
+                shutil.copytree(
+                    item,
+                    dest,
+                    symlinks=True,
+                    ignore_dangling_symlinks=True,
+                )
+                items_restored += 1
+
+        logger.info(
+            f"[Orchestrator] Restored {items_restored} items from latest answer dir " f"{latest_workspace} to workspace for {agent_id}",
+        )
+        return items_restored > 0
+
     async def _save_agent_snapshot(
         self,
         agent_id: str,
@@ -10750,10 +10810,16 @@ Your answer:"""
                 f"   - critique_packet.md: {critique_path}\n"
                 f"   - verdict.json: {verdict_path}\n"
                 f"   - next_tasks.json: {next_tasks_path}\n"
-                "3. Follow `implementation_guidance` on each task, then implement and verify.\n"
-                "4. If the deliverable is a pure text artifact, put the final\n"
+                "3. If the task plan includes correctness-critical tasks or tasks tied to\n"
+                "   explicit correctness criteria, do those first.\n"
+                "4. Then execute the remaining higher-order work and follow\n"
+                "   `implementation_guidance` on each task as written.\n"
+                "5. Finish with the final preserve/regression verification so\n"
+                "   preserved strengths remain intact and earlier correctness fixes still\n"
+                "   pass after later changes.\n"
+                "6. If the deliverable is a pure text artifact, put the final\n"
                 "   artifact body directly in `new_answer.content`.\n"
-                "5. Otherwise, call `new_answer` with your usual concise summary.\n\n"
+                "7. Otherwise, call `new_answer` with your usual concise summary.\n\n"
                 "Do NOT call `submit_checklist`.\n"
                 "Do NOT call `propose_improvements`.\n"
                 "Do NOT write a second diagnostic report.\n"
@@ -10961,7 +11027,7 @@ Your answer:"""
                 task_plan.append(
                     {
                         "type": "verify_preserve",
-                        "description": "Verify preserved strengths haven't regressed",
+                        "description": ("Verify preserved strengths haven't regressed and that earlier " "correctness fixes still pass after later changes"),
                         "execution": {"mode": "inline"},
                         "items": [
                             {
@@ -11019,7 +11085,7 @@ Your answer:"""
             task_plan.append(
                 {
                     "type": "verify_preserve",
-                    "description": "Verify preserved strengths haven't regressed",
+                    "description": ("Verify preserved strengths haven't regressed and that earlier " "correctness fixes still pass after later changes"),
                     "execution": {"mode": "inline"},
                     "items": [
                         {
@@ -14018,6 +14084,12 @@ Your answer:"""
                     is_final=True,
                 )
 
+        # Restore workspace from latest per-round answer dir before final save.
+        # In timeout/fallback paths, the workspace may have been cleared between
+        # rounds and only has scaffolding — the real deliverables are in the
+        # per-round answer directories.
+        self._restore_workspace_from_latest_answer_dir(selected_agent_id)
+
         final_context = self.get_last_context(selected_agent_id)
         await self._save_agent_snapshot(
             selected_agent_id,
@@ -15172,6 +15244,9 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         finally:
             # Ensure final snapshot is always saved (even if "done" chunk wasn't yielded)
             if not final_snapshot_saved:
+                # Restore workspace in case it was cleared between rounds
+                self._restore_workspace_from_latest_answer_dir(self._selected_agent)
+
                 # Use clean_answer_content (excludes tool calls/results) for answer.txt
                 final_answer = clean_answer_content.strip() if clean_answer_content.strip() else self.agent_states[selected_agent_id].answer
                 final_context = self.get_last_context(selected_agent_id)

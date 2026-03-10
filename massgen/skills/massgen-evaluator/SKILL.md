@@ -14,6 +14,28 @@ Invoke MassGen's multi-agent evaluation to get diverse, critical feedback on you
 - When wanting diverse AI perspectives on implementation quality
 - Whenever you've self-improved as much as you can alone
 
+## Scope
+
+Before starting, determine which deliverables the evaluation covers.
+Evaluations are most effective when focused on specific artifacts, not
+"everything in the repo."
+
+**When invoking this skill, specify the scope:**
+
+- **Which files/artifacts to evaluate** — e.g., `src/api/handler.ts`,
+  `beatles/index.html`, `docs/architecture.md`
+- **What to ignore** — e.g., test fixtures, generated files, vendored deps
+- **Evaluation focus** (optional) — security, performance, architecture,
+  test coverage, code quality, or general
+
+If the user doesn't specify scope, ask them. A scoped evaluation with 1-3
+deliverables produces far better critiques than an unscoped "review everything."
+
+The scope flows into three places:
+1. **Context file** (Step 1) — "Deliverables in Scope" and "Out of Scope"
+2. **Evaluation criteria** (Step 2) — criteria tailored to the scoped deliverables
+3. **Prompt** (Step 3) — evaluators know exactly what to inspect
+
 ## Prerequisites
 
 1. **Check if massgen is installed**:
@@ -53,28 +75,37 @@ All evaluation artifacts (context, criteria, prompt, output, logs) go in this di
 
 Write `$EVAL_DIR/context.md` with structured context about the work being evaluated.
 
-**What you provide** (evaluators cannot infer this):
-- Requirements and acceptance criteria
-- File structure overview
-- Git info (diff stats, commits, branch)
-- Areas of concern
-- Verification results (test output, build logs, lint results)
+The context file has two jobs: (1) orient the evaluators so they don't waste
+time discovering basic facts, and (2) stay out of the way so evaluators can
+find problems **you don't know about**. Do NOT bias the evaluators toward
+your known issues — that's what your own iteration loop is for. The whole
+point of MassGen evaluation is fresh eyes finding what you missed.
 
-**What evaluators discover on their own** (from reading the cwd):
-- Code quality issues, bugs, antipatterns
-- Architecture assessment
-- Test coverage gaps
-- Security vulnerabilities
-- Alignment between requirements and implementation
+**What you provide** (evaluators cannot infer this):
+- What was built and why (the task, not your assessment of quality)
+- Scope — which files to look at, which to ignore
+- Factual state — git info, file structure, test output
+- Verification evidence already gathered (so evaluators don't re-run it)
+
+**What you explicitly do NOT provide:**
+- Your opinion on what's wrong — that biases the evaluators
+- Detailed acceptance criteria checklists — the evaluation criteria (Step 2) handle this
+- "Areas of concern" — the evaluators should discover concerns independently
 
 **Context file template:**
 
 ```markdown
+## Deliverables in Scope
+<the specific files/artifacts to evaluate — list each file path and what it is>
+
+## Out of Scope
+<files/directories evaluators should NOT spend time on>
+
 ## Original Task
-<what the user asked for — the requirements>
+<what the user asked for — keep factual, not evaluative>
 
 ## What Was Done
-<summary of implementation work completed>
+<summary of implementation work completed — facts, not quality judgments>
 
 ## File Structure
 <relevant directory tree / key files overview>
@@ -83,27 +114,39 @@ Write `$EVAL_DIR/context.md` with structured context about the work being evalua
 <git diff --stat, recent commits, branch info>
 <for patches: include actual diff or key changed files>
 
-## Requirements / Acceptance Criteria
-<what 'done' looks like — explicit success criteria>
+## Verification Evidence
+<test output, build results, lint output — raw facts the evaluators can reuse>
 
-## Areas of Concern
-<where you're stuck or unsure — optional but valuable>
-
-## Verification Results
-<test output, build results, lint output, etc.>
-
-## Key Files to Examine
-<most important files for evaluators to focus on>
+## Known Stuck Points (optional)
+<ONLY if you have specific problems you've tried and failed to fix>
+<describe what you tried and why it didn't work — evaluators will prescribe
+a different strategy. do NOT list general concerns or quality worries here>
 ```
+
+The context splits into two evaluation modes:
+
+1. **Known stuck points**: You know what's wrong but can't fix it. List what
+   you tried and why it failed. The evaluator diagnoses your failure mode and
+   prescribes a different approach.
+
+2. **Unknown unknowns** (the primary value): You don't know what's wrong.
+   The evaluation criteria (Step 2) express what you *value* at a high level.
+   The evaluator discovers specific problems you didn't know existed by
+   applying those criteria against the actual deliverables. This is why the
+   context file should NOT contain your quality opinions — they anchor the
+   evaluator to your blind spots instead of letting it see past them.
 
 ### Step 2: Generate Evaluation Criteria
 
 Read the criteria writing guide at `references/eval_criteria_guide.md`
 (relative to this skill).
 
-Based on the task context from Step 1, generate 4-7 evaluation criteria
-as a JSON file. Your criteria should be task-specific, concrete, and
-scoreable — following the tier system from the guide.
+Criteria express **what you value** — the quality dimensions that matter for
+this deliverable. They are NOT a list of known problems. The evaluator uses
+your criteria as a lens to discover specific issues you haven't seen yet.
+
+Generate 4-7 criteria as a JSON file. Each criterion names a quality axis
+and describes what to look for, following the tier system from the guide.
 
 If there's a specific evaluation focus (security, performance, architecture,
 test coverage, code quality), weight your criteria toward that focus area.
@@ -142,6 +185,9 @@ can observe evaluation progress in their browser.
 
 **4a. Start MassGen in background, capturing the log directory:**
 
+Run this command in the background using your agent's native mechanism
+(e.g., `run_in_background` in Claude Code):
+
 ```bash
 uv run massgen --automation \
   --no-parse-at-references \
@@ -149,30 +195,23 @@ uv run massgen --automation \
   --eval-criteria $EVAL_DIR/criteria.json \
   --output-file $EVAL_DIR/result.md \
   "$(cat $EVAL_DIR/prompt.md)" \
-  > $EVAL_DIR/output.log 2>&1 &
-MASSGEN_PID=$!
+  > $EVAL_DIR/output.log 2>&1
 ```
-
-Use your agent's native background execution mechanism
-(e.g., `run_in_background` in Claude Code).
 
 **4b. Extract the log directory and launch the web viewer:**
 
-The automation output's first line is `LOG_DIR: <path>`. Wait briefly
-for it to appear, then launch the viewer:
+The automation output's first line is `LOG_DIR: <path>`. Once MassGen
+has started (usually within 2 seconds), extract the log directory from
+the output and launch the viewer:
 
 ```bash
-# Wait for LOG_DIR to be written (usually < 2 seconds)
-for i in $(seq 1 10); do
-  LOG_DIR=$(grep -m1 '^LOG_DIR:' $EVAL_DIR/output.log 2>/dev/null | cut -d' ' -f2)
-  [ -n "$LOG_DIR" ] && break
-  sleep 1
-done
+LOG_DIR=$(grep -m1 '^LOG_DIR:' $EVAL_DIR/output.log | cut -d' ' -f2)
+```
 
-if [ -n "$LOG_DIR" ]; then
-  # Launch web viewer — automatically opens browser for the user
-  uv run massgen viewer "$LOG_DIR" --web &
-fi
+Then launch the web viewer (also in the background):
+
+```bash
+uv run massgen viewer "$LOG_DIR" --web
 ```
 
 The viewer automatically opens `http://localhost:8000` in the user's
@@ -192,24 +231,46 @@ No `--config` flag — uses the default config from `.massgen/config.yaml`.
 
 ### Step 5: Parse the Output
 
-Read `$EVAL_DIR/result.md` and extract:
+The evaluator agents produce three structured files in the winner's workspace.
+The workspace path is shown in `$EVAL_DIR/result.md` (look for "Workspace cwd"
+or check `status.json` in the log directory for `workspace_paths`).
 
-1. **Verdict**: ITERATE or CONVERGED (from the Evaluation Summary section at the bottom)
-2. **Top Improvements**: ordered by impact, with `concrete_steps`
-3. **Preserve**: elements to keep unchanged
-4. **Next Steps**: concrete actions with specific techniques
-5. **Prior attempt diagnosis**: what was tried before and why it didn't work
+From the winner's workspace, read:
+
+1. **`verdict.json`** — machine-readable verdict and per-criterion scores
+   ```json
+   {"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4, "E2": 7}}
+   ```
+2. **`next_tasks.json`** (when verdict is "iterate") — machine-readable task
+   handoff with `objective`, `primary_strategy`, and `tasks[]` each containing
+   `implementation_guidance` with concrete step-by-step instructions
+3. **`critique_packet.md`** — full prose critique with `improvement_spec`,
+   `preserve`, `unexplored_approaches`, and `evidence_gaps`
+
+The `$EVAL_DIR/result.md` file contains a concise summary referencing these files.
 
 ### Step 6: Apply the Feedback
 
-Based on the verdict:
+Read `verdict.json` first:
 
-- **ITERATE**: Apply the improvements from the `improvement_spec` section, following `concrete_steps` and `execution_order`. Pay special attention to `prior_attempt_awareness` — if the evaluators identified failed approaches, do NOT retry them.
-- **CONVERGED**: The work meets the quality bar. Proceed to delivery.
+- **`"iterate"`**: Read `next_tasks.json` and execute the tasks in order.
+  Each task's `implementation_guidance` has specific techniques and steps.
+  Pay attention to `prior_attempt_awareness` — if the evaluators identified
+  failed approaches, do NOT retry them. Consult `critique_packet.md` for
+  the full `improvement_spec` with `concrete_steps` per criterion.
+- **`"converged"`**: The work meets the quality bar. Proceed to delivery.
 
 ## Output Structure Reference
 
-The evaluation output contains these sections (all inline in the answer):
+The evaluator produces three files in the winner's workspace:
+
+| File | Format | Purpose |
+|---|---|---|
+| `verdict.json` | JSON | Machine-readable verdict (`iterate`/`converged`) + per-criterion scores (E1..EN, 1-10) |
+| `next_tasks.json` | JSON | Implementation handoff: `objective`, `primary_strategy`, `tasks[]` with `implementation_guidance` |
+| `critique_packet.md` | Markdown | Full prose critique (see sections below) |
+
+**`critique_packet.md` sections:**
 
 | Section | Purpose |
 |---|---|
@@ -232,29 +293,29 @@ The evaluation output contains these sections (all inline in the answer):
 EVAL_DIR=".massgen/eval/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$EVAL_DIR"
 
-# Write context
+# Write context (scope: 2 specific deliverables, no quality opinions)
 cat > $EVAL_DIR/context.md << 'EOF'
+## Deliverables in Scope
+- `massgen/websocket_handler.py` — WebSocket server implementation
+- `webui/src/hooks/useAgentStatus.ts` — client-side React hook
+
+## Out of Scope
+- Test files, CI config, package.json changes
+
 ## Original Task
 Add WebSocket support for real-time agent status updates
 
 ## What Was Done
-Implemented WebSocket server in websocket_handler.py, client in webui/src/hooks/useAgentStatus.ts
+Implemented WebSocket server and client hook. Server broadcasts agent state
+changes, client subscribes per session. Uses native WebSocket API.
 
 ## Git Info
 Branch: feat/websocket-status (12 commits ahead of main)
 Key files changed: websocket_handler.py, useAgentStatus.ts, types.ts
 
-## Requirements / Acceptance Criteria
-- WebSocket connection auto-reconnects on disconnect
-- Status updates arrive within 500ms of agent state change
-- Works with 3+ concurrent agent sessions
-
-## Verification Results
+## Verification Evidence
 pytest: 47 passed, 0 failed
 vitest: 12 passed, 0 failed
-
-## Key Files to Examine
-massgen/websocket_handler.py, webui/src/hooks/useAgentStatus.ts
 EOF
 
 # Write criteria
@@ -270,16 +331,17 @@ EOF
 
 # Build prompt (fill template, then invoke in background)
 # ... (follow Step 3 to construct prompt from template)
+
+# Run in background using your agent's native mechanism
 uv run massgen --automation --no-parse-at-references --cwd-context ro \
   --eval-criteria $EVAL_DIR/criteria.json \
   --output-file $EVAL_DIR/result.md \
   "$(cat $EVAL_DIR/prompt.md)" \
-  > $EVAL_DIR/output.log 2>&1 &
+  > $EVAL_DIR/output.log 2>&1
 
-# Extract LOG_DIR and open web viewer for the user
-sleep 2
+# Extract LOG_DIR and open web viewer (also in background)
 LOG_DIR=$(grep -m1 '^LOG_DIR:' $EVAL_DIR/output.log | cut -d' ' -f2)
-uv run massgen viewer "$LOG_DIR" --web &
+uv run massgen viewer "$LOG_DIR" --web
 ```
 
 ### Architecture Evaluation

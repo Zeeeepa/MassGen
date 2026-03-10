@@ -155,6 +155,8 @@ Write this like a compact design spec or builder handoff. Include:
 - `anti_goals`
 - `deliverable_expectations`
 
+If the task plan contains correctness-critical fixes or explicit correctness criteria failures, do those first. Then complete the remaining higher-order improvements. Finish with a preserve/regression pass that confirms preserved strengths still hold and earlier correctness fixes still hold after later changes.
+
 Each `per_criterion_spec` entry should explain:
 
 - what must change
@@ -171,6 +173,9 @@ Each `per_criterion_spec` entry should explain:
 ### `verification_plan`
 
 Spell out the concrete checks that should be rerun after implementation.
+Use explicit correctness criteria when they exist. Otherwise, state the
+concrete blocker/basic-correctness condition that must be proven fixed in the
+actual deliverable.
 
 ### `evidence_gaps`
 
@@ -259,6 +264,9 @@ Rules for `next_tasks.json`:
 - prefer execution-oriented tasks that can fix multiple weak criteria together
 - choose one thesis via `primary_strategy`; do not keep multiple incompatible directions open
 - explicitly name what should be removed or deprioritized in `deprioritize_or_remove`
+- if the task plan contains correctness-critical fixes or tasks tied to
+  explicit correctness criteria, do those first rather than burying them under
+  polish or novelty work
 - if an `unexplored_approach` should actually be pursued, elevate it here; do
   not leave the implementing agent to choose among alternatives during execution
 - for now, always emit one chunk only: `execution_scope.active_chunk` must be `"c1"` and every task `chunk` must be `"c1"`
@@ -280,6 +288,11 @@ Rules for `next_tasks.json`:
 - when the task brief lists available specialized subagents and delegation is a good fit, use `execution: {"mode": "delegate", "subagent_type": "..."}` or `execution: {"mode": "delegate", "subagent_id": "..."}`.
 - if the task brief says no specialized subagents are available, keep every task inline and do not emit delegate execution hints
 - use `metadata.relates_to` to show which criteria a task addresses
+- when explicit correctness criteria exist, reference them directly in task
+  verification; otherwise describe the blocker/basic-correctness condition that
+  will prove the task is fixed in the actual output
+- the final preserve/regression verification must confirm both preserved
+  strengths and that earlier correctness fixes still hold after later changes
 
 ## Evaluation expectations
 

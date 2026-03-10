@@ -1094,6 +1094,14 @@ After implementing all tasks, verify them and call `new_answer` to submit your
 improved work. If the deliverable is a pure text artifact, place the final
 artifact body directly in `new_answer.content`.
 
+If the task plan includes correctness-critical tasks or tasks tied to explicit \
+correctness criteria, do those first. Then execute the remaining higher-order work. \
+Use explicit correctness criteria when they exist in the evaluator packet or task \
+metadata; otherwise treat concrete blocker/basic-viability defects as \
+correctness-critical. Finish with the final preserve/regression verification so you \
+confirm preserved strengths still hold and earlier correctness fixes still hold after \
+later changes.
+
 **Injected tasks are mandatory, not advisory.** The evaluator has access to
 all candidate answers, cross-answer analysis, and the full evaluation criteria.
 Its task plan reflects where your work genuinely falls short — even when you
@@ -3398,6 +3406,12 @@ Every criterion added to the plan MUST be addressed before you submit. Do not ch
 easy improvements and skip the hard ones. Call `get_task_plan` to see all items, then work
 through them one by one. If a task is truly infeasible this round, explicitly mark it `[skip]`
 in the description with a reason — do not silently leave it pending.
+
+If the plan includes correctness-critical tasks, complete those first. Use explicit \
+correctness criteria when they exist in the task descriptions, evaluator packet, or \
+checklist. Then move to the remaining quality, novelty, or polish tasks. End with the \
+final preserve/regression pass and confirm both that preserved strengths remain and \
+that earlier correctness fixes still pass after later changes.
 
 The flow is:
 ```
