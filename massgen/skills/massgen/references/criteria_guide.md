@@ -1,8 +1,8 @@
-# Evaluation Criteria Writing Guide
+# Quality Criteria Writing Guide
 
-How to write effective evaluation criteria for MassGen's checklist-gated voting system.
-This guide mirrors the internal criteria generation prompt so that calling models
-produce criteria of the same quality.
+How to write effective quality criteria for MassGen's checklist-gated voting system.
+This guide applies to all modes (evaluate, plan, spec). Criteria express what you
+value — the quality dimensions that matter for the deliverable being produced.
 
 ## Format
 
@@ -111,6 +111,50 @@ property to verify.
 
 Omit `verify_by` only when the criterion can be fully assessed by reading the output
 text or inspecting the source file structure.
+
+## Default Presets
+
+MassGen includes built-in criteria presets that are applied automatically when no
+`--eval-criteria` flag is provided. These presets live in `evaluation_criteria_generator.py`.
+
+### `"planning"` preset (5 must + 3 should)
+
+1. **Scope capture** (must): captures the user's requested outcome and constraints without scope drift
+2. **Task graph validity** (must): executable and internally consistent — dependencies valid, ordering coherent
+3. **Actionability** (must): tasks describe WHAT to produce AND HOW — method, key decisions, constraints. Each task actionable without inferring direction
+4. **Verification guidance** (must): each task has verification matched to its type (deterministic or qualitative, NOT forced numeric thresholds on qualitative work)
+5. **Technology choices** (must): frameworks, libraries, tools named and justified — not left for the executor to guess
+6. **Interface contracts** (should): where tasks connect, data shapes/file conventions/API signatures specified
+7. **Assumptions documented** (should): boundaries and trade-offs documented with rationale, ambiguities resolved with explicit defaults
+8. **Sequencing and risk** (should): thoughtful chunking and prioritization, high-risk tasks first, quality gates placed for maximum impact
+
+### `"spec"` preset (3 must + 1 should + 1 could)
+
+1. **Completeness and unambiguity** (must): each requirement describes a single, testable behavior — implementable without guessing intent
+2. **Acceptance criteria** (must): specific conditions, inputs, expected outputs, or observable behaviors that prove the requirement is met
+3. **Scope boundaries** (must): what is in scope and what is deliberately out of scope are both stated
+4. **Prioritization and consistency** (should): no contradictions, priority reflects dependencies and importance
+5. **Edge cases** (could): anticipates error states, boundary conditions relevant to the domain
+
+### `"evaluation"` preset
+
+Generated dynamically per task by MassGen's criteria generation subagent. Used when
+no `--eval-criteria` flag is provided in evaluate mode.
+
+### When to Use Presets vs Custom Criteria
+
+**Use the preset when:**
+- General-purpose evaluation, planning, or spec writing
+- No domain-specific quality concerns beyond the preset dimensions
+- You want to get started quickly without writing criteria
+
+**Write custom criteria when:**
+- Domain-specific quality axes matter (e.g., security focus, visual design quality)
+- The user specified particular concerns or focus areas
+- You're refining an existing plan/spec with known gaps
+- The preset dimensions don't cover what matters most for this task
+
+Custom criteria via `--eval-criteria` always override the default preset.
 
 ## Anti-Patterns
 

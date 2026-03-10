@@ -290,6 +290,13 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
             " where they most improve final output quality.",
             "should",
         ),
+        (
+            "Iterations prefer tightening existing tasks over adding new ones."
+            " New tasks are justified when filling genuine gaps, but unjustified"
+            " growth indicates sprawl. Descriptions, verification, and"
+            " dependencies should improve in precision across rounds.",
+            "should",
+        ),
     ],
     "spec": [
         (
@@ -315,6 +322,14 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Requirements anticipate edge cases, error states, and boundary" " conditions relevant to the domain. The spec does not only" " describe the happy path.",
+            "could",
+        ),
+        (
+            "Iterations prefer tightening existing requirements over adding"
+            " new ones. New requirements are justified when filling genuine"
+            " gaps, but unjustified growth indicates sprawl. EARS statements,"
+            " verification, and rationale should improve in precision across"
+            " rounds.",
             "could",
         ),
     ],

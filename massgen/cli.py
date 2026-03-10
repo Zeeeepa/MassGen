@@ -188,7 +188,13 @@ def _print_headless_quickstart_summary(result: dict) -> None:
         print(f"  {key_name}: {status}")
 
     # Selection
-    if result.get("backend") and result.get("model"):
+    if result.get("backends") and result.get("models"):
+        # Multi-backend mode
+        pairs = list(zip(result["backends"], result["models"]))
+        print(f"\nSelected ({len(pairs)} backends):")
+        for b, m in pairs:
+            print(f"  {b} / {m}")
+    elif result.get("backend") and result.get("model"):
         print(f"\nSelected: {result['backend']} / {result['model']}")
     else:
         print("\nSelected: none (no API keys found)")
@@ -222,6 +228,82 @@ def _print_headless_quickstart_summary(result: dict) -> None:
         for step in result.get("manual_steps", []):
             print(f"  -> {step}")
 
+    print()
+
+
+def _print_backends_table() -> None:
+    """Print a table of all supported backends with models, capabilities, and auth."""
+    from massgen.backend.capabilities import BACKEND_CAPABILITIES
+
+    # Column widths
+    w_type = 16
+    w_name = 22
+    w_default = 26
+    w_auth = 28
+    w_caps = 40
+
+    header = f"{'Backend Type':<{w_type}}" f"{'Provider':<{w_name}}" f"{'Default Model':<{w_default}}" f"{'Auth':<{w_auth}}" f"{'Key Capabilities'}"
+    sep = "-" * (w_type + w_name + w_default + w_auth + w_caps)
+
+    print(f"\n{sep}")
+    print("MASSGEN SUPPORTED BACKENDS")
+    print(f"{sep}\n")
+    print(header)
+    print(sep)
+
+    for backend_type, caps in sorted(BACKEND_CAPABILITIES.items()):
+        # Auth info
+        if caps.env_var:
+            auth = f"{caps.env_var}"
+            # Agent-based backends also support login
+            if backend_type in ("claude_code", "codex"):
+                auth += " or login"
+            elif backend_type == "copilot":
+                auth = "GitHub Copilot subscription"
+        else:
+            auth = "none"
+
+        # Key capabilities (abbreviated)
+        cap_list = []
+        if "web_search" in caps.supported_capabilities:
+            cap_list.append("web")
+        if "code_execution" in caps.supported_capabilities:
+            cap_list.append("code")
+        if caps.filesystem_support == "native":
+            cap_list.append("fs-native")
+        elif caps.filesystem_support == "mcp":
+            cap_list.append("fs-mcp")
+        if "mcp" in caps.supported_capabilities:
+            cap_list.append("mcp")
+        if "reasoning" in caps.supported_capabilities:
+            cap_list.append("reasoning")
+        if "image_generation" in caps.supported_capabilities:
+            cap_list.append("img-gen")
+        if "image_understanding" in caps.supported_capabilities:
+            cap_list.append("vision")
+        cap_str = ", ".join(cap_list) if cap_list else "basic"
+
+        print(
+            f"{backend_type:<{w_type}}" f"{caps.provider_name:<{w_name}}" f"{caps.default_model:<{w_default}}" f"{auth:<{w_auth}}" f"{cap_str}",
+        )
+
+    print(f"\n{sep}")
+    print("MODELS PER BACKEND")
+    print(f"{sep}\n")
+
+    for backend_type, caps in sorted(BACKEND_CAPABILITIES.items()):
+        models_str = ", ".join(caps.models[:8])
+        if len(caps.models) > 8:
+            models_str += f" (+{len(caps.models) - 8} more)"
+        print(f"  {backend_type}: {models_str}")
+
+    print(f"\n{sep}")
+    print(
+        "Use with: massgen --quickstart --headless" " --config-backend <type> --config-model <model>",
+    )
+    print(
+        "Multi-backend: massgen --quickstart --headless" " --config-backend claude,openai,gemini" " --config-model claude-opus-4-6,gpt-5.4,gemini-3-flash-preview",
+    )
     print()
 
 
@@ -883,10 +965,12 @@ Only after scope confirmation and sufficient research:
 1. **Primary artifact**: `project_plan.json` - Write this file using file write tools:
    - If `deliverable/` folder exists in your workspace, put it there: `deliverable/project_plan.json`
    - Otherwise, put it in your workspace root: `project_plan.json`
-2. **Supporting docs**: Create additional markdown docs as needed (same location as project_plan.json):
-   - User stories or requirements docs
-   - Technical approach / design decisions
-   - Separate spec files if request contains multiple distinct features
+2. **Auxiliary files** (optional, organized into purpose-driven subdirectories):
+   - `research/` — background research, prior art, feasibility analysis, codebase exploration notes
+   - `framework/` — architecture decisions, technology choices with rationale, design patterns selected
+   - `risks/` — risk register, mitigation strategies, dependency analysis
+   - `requirements/` — user stories, acceptance criteria, requirements docs
+   Auxiliary files support the plan but are NOT the plan — `project_plan.json` is always the source of truth.
 
 **IMPORTANT**: Write `project_plan.json` directly as a file. Do NOT use MCP planning tools
 (create_task_plan, update_task_status, etc.) to create this deliverable - those tools are for
@@ -905,6 +989,11 @@ tracking your own internal work progress, not for creating the project plan deli
 1. Does the final product work? (run it, use it, see it)
 2. Does it look/feel right? (visual quality, UX)
 3. Only then: is the code correct? (builds, tests pass)
+
+**Your JSON output IS the iteration surface.** Prefer tightening existing \
+tasks — sharpen descriptions, add missing verification, fix dependency \
+ordering — over adding new tasks or prose. Adding tasks to fill genuine \
+gaps is fine; adding tasks that don't serve a clear purpose is not.
 
 **Tasks should be achievable with the available tools.** Executing agents will have access to the configured tools and will figure out how to use them.
 
@@ -952,11 +1041,18 @@ Write `project_plan.json` with this structure:
 ## Quality Criteria
 - Each task should be independently verifiable
 - Dependencies (depends_on) should form a valid DAG (no cycles)
-- Descriptions should be specific enough to implement
+- Descriptions must include both WHAT and HOW — not just "Create hero \
+section" but specific layout, content, and behavior. A developer reading \
+the task should know what to build without asking questions
+- Where tasks connect or produce artifacts consumed by other tasks, \
+specify interface contracts: data shapes, file conventions, API \
+signatures. Independent execution should not require reverse-engineering \
+unstated agreements
 - Scope should be confirmed with user before detailed planning
 - Verification criteria should be testable and specific
 - Use verification_group to batch related tasks (e.g., verify all pages after building them)
 - For user-facing tasks, include at least one verification step that checks the actual user-visible output
+- Prefer tightening existing tasks over adding new ones. Growth is fine when filling genuine gaps; growth without clear purpose is sprawl
 
 ---
 
@@ -1083,15 +1179,23 @@ file write tools:
    - If `deliverable/` folder exists in your workspace, put it there: \
 `deliverable/project_spec.json`
    - Otherwise, put it in your workspace root: `project_spec.json`
-2. **Supporting docs**: Create additional markdown docs as needed \
-(same location as project_spec.json):
-   - Design decisions and rationale
-   - Technical context and constraints
-   - User stories or acceptance criteria
+2. **Auxiliary files** (optional, organized into purpose-driven subdirectories):
+   - `research/` — domain analysis, user research, competitive analysis, prior art
+   - `design/` — system design notes, data models, API contracts, integration points
+   - `decisions/` — architectural decision records (ADRs), trade-off analyses
+   - `requirements/` — user stories, acceptance criteria, persona descriptions
+   Auxiliary files support the spec but are NOT the spec — `project_spec.json` \
+is always the source of truth.
 
 **IMPORTANT**: Write `project_spec.json` directly as a file. Do NOT use \
 MCP planning tools (create_task_plan, update_task_status, etc.) to create \
 this deliverable.
+
+**Your JSON output IS the iteration surface.** Prefer tightening existing \
+requirements — sharpen EARS statements, add missing verification, \
+resolve ambiguities — over adding new requirements or prose. Adding \
+requirements to fill genuine gaps is fine; adding them without clear \
+purpose is not.
 
 ## EARS Notation
 
@@ -1160,10 +1264,11 @@ dependency DAG.
 ## Quality Criteria
 - Each requirement should be independently verifiable
 - Dependencies (depends_on) should form a valid DAG (no cycles)
-- EARS statements should be unambiguous and testable
+- EARS statements should be unambiguous and testable — a single behavior per requirement
 - Scope should be confirmed with user before detailed spec writing
 - Verification criteria should be specific and measurable
 - Rationale should explain the business or technical reason
+- Prefer tightening existing requirements over adding new ones. Growth is fine when filling genuine gaps; growth without clear purpose is sprawl
 
 ---
 
@@ -10602,6 +10707,11 @@ Environment Variables:
         help="Interactively select and pull MassGen Docker executor images (sudo image recommended by default)",
     )
     parser.add_argument(
+        "--list-backends",
+        action="store_true",
+        help="List all supported backends with models, capabilities, and auth requirements",
+    )
+    parser.add_argument(
         "--list-examples",
         action="store_true",
         help="List available example configurations from package",
@@ -10830,6 +10940,10 @@ def _cli_main_continued(args):
         if not result.is_valid() or (args.strict and result.has_warnings()):
             sys.exit(1)
         sys.exit(0)
+
+    if args.list_backends:
+        _print_backends_table()
+        return
 
     if args.list_examples:
         show_available_examples()

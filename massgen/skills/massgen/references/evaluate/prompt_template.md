@@ -1,6 +1,6 @@
 # Evaluation Prompt Template
 
-This file contains the evaluation prompt template for the `massgen-evaluator` skill. The calling agent reads this template, fills in the placeholders, and passes the result as the MassGen prompt.
+This file contains the evaluation prompt template for the `massgen` skill (evaluate mode). The calling agent reads this template, fills in the placeholders, and passes the result as the MassGen prompt.
 
 The output contract mirrors `massgen/subagent_types/round_evaluator/SUBAGENT.md` — agents produce structured files (`critique_packet.md`, `verdict.json`, `next_tasks.json`) rather than dumping everything inline.
 

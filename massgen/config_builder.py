@@ -4166,17 +4166,28 @@ class ConfigBuilder:
         Auto-detects API keys, selects the best backend/model, generates
         config, and reports results. Designed for programmatic use by AI agents.
 
+        Supports multi-backend configs via comma-separated values:
+          --config-backend claude,openai,gemini
+          --config-model claude-opus-4-6,gpt-5.4,gemini-3-flash-preview
+
+        When multiple backends are provided, each backend gets one agent
+        (num_agents is ignored). When models list is shorter than backends,
+        defaults are used for remaining backends.
+
         Args:
             output_dir: Directory for config and .env files
             num_agents: Number of agents (default 3)
-            backend_override: Force specific backend (e.g., "claude", "openai")
-            model_override: Force specific model
+            backend_override: Force specific backend(s), comma-separated
+                for multi-backend (e.g., "claude,openai,gemini")
+            model_override: Force specific model(s), comma-separated to
+                match backends (e.g., "claude-opus-4-6,gpt-5.4")
             use_docker: True/False to force, None to auto-detect
             context_path: Optional path to add as context
 
         Returns:
             Dict with keys: success, config_path, env_template_path, backend,
-            model, api_keys_summary, docker_available, docker_pulled,
+            model, backends (for multi), models (for multi),
+            api_keys_summary, docker_available, docker_pulled,
             skills_installed, messages, manual_steps
         """
         result = {
@@ -4185,6 +4196,8 @@ class ConfigBuilder:
             "env_template_path": None,
             "backend": None,
             "model": None,
+            "backends": None,
+            "models": None,
             "api_keys_summary": {},
             "docker_available": False,
             "docker_pulled": False,
@@ -4201,52 +4214,92 @@ class ConfigBuilder:
             if env_var:
                 result["api_keys_summary"][env_var] = api_keys.get(provider_id, False)
 
-        # Step 2: Select backend and model
-        backend = backend_override
-        model = model_override
+        # Step 2: Select backend(s) and model(s)
+        # Parse comma-separated values for multi-backend support
+        backends_list = [b.strip() for b in backend_override.split(",") if b.strip()] if backend_override and "," in backend_override else None
+        # Parse models: comma-separated list, OR single value as [value]
+        if model_override and "," in model_override:
+            models_list = [m.strip() for m in model_override.split(",") if m.strip()]
+        elif model_override and backends_list:
+            # Single model with multi-backend: apply to first backend
+            models_list = [model_override.strip()]
+        else:
+            models_list = None
 
-        if backend:
-            # Validate override has available key
-            if not api_keys.get(backend, False):
-                # Create .env template and fail
+        multi_backend = backends_list is not None and len(backends_list) > 1
+
+        if multi_backend:
+            # Multi-backend mode: each backend gets one agent
+            # Resolve models for each backend
+            resolved_models: list[str] = []
+            missing_keys: list[str] = []
+            for i, b in enumerate(backends_list):
+                # Check API key
+                if not api_keys.get(b, False):
+                    missing_keys.append(b)
+                    continue
+                # Resolve model
+                if models_list and i < len(models_list):
+                    resolved_models.append(models_list[i])
+                else:
+                    # Use default model for this backend
+                    m = self._resolve_default_model(b)
+                    resolved_models.append(m)
+
+            if missing_keys:
                 result["env_template_path"] = self._create_env_template(
                     output_dir,
                     api_keys,
                 )
                 result["manual_steps"].append(
-                    f"Backend '{backend}' requires an API key. " f"Fill in {output_dir}/.env, then re-run.",
+                    f"Backend(s) {', '.join(missing_keys)} require API keys. " f"Fill in {output_dir}/.env, then re-run.",
                 )
                 return result
-            if not model:
-                # Find default model for this backend
-                for priority_backend, priority_model in HEADLESS_BACKEND_PRIORITY:
-                    if priority_backend == backend:
-                        model = priority_model
-                        break
-                if not model:
-                    provider_info = self.PROVIDERS.get(backend, {})
-                    model = provider_info.get("default_model", "")
+
+            # Filter out backends that had missing keys (already returned above)
+            result["backends"] = backends_list
+            result["models"] = resolved_models
+            # Set single-value fields to first for backward compat
+            result["backend"] = backends_list[0]
+            result["model"] = resolved_models[0]
         else:
-            # Auto-select: walk priority list, pick first with available key
-            for priority_backend, priority_model in HEADLESS_BACKEND_PRIORITY:
-                if api_keys.get(priority_backend, False):
-                    backend = priority_backend
-                    model = model_override or priority_model
-                    break
+            # Single-backend mode (original behavior)
+            backend = backends_list[0] if backends_list else backend_override
+            model = models_list[0] if models_list else model_override
 
-        if not backend or not model:
-            # No keys found at all — create .env template
-            result["env_template_path"] = self._create_env_template(
-                output_dir,
-                api_keys,
-            )
-            result["manual_steps"].append(
-                f"No API keys found. Fill in {output_dir}/.env, then re-run " "massgen --quickstart --headless",
-            )
-            return result
+            if backend:
+                # Validate override has available key
+                if not api_keys.get(backend, False):
+                    result["env_template_path"] = self._create_env_template(
+                        output_dir,
+                        api_keys,
+                    )
+                    result["manual_steps"].append(
+                        f"Backend '{backend}' requires an API key. " f"Fill in {output_dir}/.env, then re-run.",
+                    )
+                    return result
+                if not model:
+                    model = self._resolve_default_model(backend)
+            else:
+                # Auto-select: walk priority list, pick first with available key
+                for priority_backend, priority_model in HEADLESS_BACKEND_PRIORITY:
+                    if api_keys.get(priority_backend, False):
+                        backend = priority_backend
+                        model = model or priority_model
+                        break
 
-        result["backend"] = backend
-        result["model"] = model
+            if not backend or not model:
+                result["env_template_path"] = self._create_env_template(
+                    output_dir,
+                    api_keys,
+                )
+                result["manual_steps"].append(
+                    f"No API keys found. Fill in {output_dir}/.env, then re-run " "massgen --quickstart --headless",
+                )
+                return result
+
+            result["backend"] = backend
+            result["model"] = model
 
         # Step 3: Docker auto-detection
         if use_docker is None:
@@ -4279,14 +4332,45 @@ class ConfigBuilder:
         # Step 4: Generate config
         config_path = str(Path(output_dir) / "config.yaml")
         try:
-            self.generate_config_programmatic(
-                output_path=config_path,
-                num_agents=num_agents,
-                backend_type=backend,
-                model=model,
-                use_docker=use_docker,
-                context_path=context_path,
-            )
+            if multi_backend:
+                # Multi-backend: build agents_config directly
+                agents_config = []
+                for i, (b, m) in enumerate(zip(backends_list, resolved_models)):
+                    provider_info = self.PROVIDERS.get(b, {})
+                    agents_config.append(
+                        {
+                            "id": f"{b.split('.')[-1]}-{m.split('-')[-1]}{i + 1}",
+                            "type": provider_info.get("type", b),
+                            "model": m,
+                        },
+                    )
+                config = self._generate_quickstart_config(
+                    agents_config,
+                    context_path=context_path,
+                    use_docker=use_docker,
+                )
+                # Save config
+                import yaml
+
+                output_file = Path(config_path).expanduser().resolve()
+                output_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_file, "w") as f:
+                    yaml.dump(
+                        config,
+                        f,
+                        default_flow_style=False,
+                        sort_keys=False,
+                        allow_unicode=True,
+                    )
+            else:
+                self.generate_config_programmatic(
+                    output_path=config_path,
+                    num_agents=num_agents,
+                    backend_type=result["backend"],
+                    model=result["model"],
+                    use_docker=use_docker,
+                    context_path=context_path,
+                )
             result["config_path"] = config_path
             result["messages"].append("Config generated successfully")
         except Exception as e:
@@ -4303,6 +4387,18 @@ class ConfigBuilder:
 
         result["success"] = True
         return result
+
+    def _resolve_default_model(self, backend: str) -> str:
+        """Resolve the default model for a backend.
+
+        Checks HEADLESS_BACKEND_PRIORITY first, then falls back to
+        the provider's default_model from capabilities.
+        """
+        for priority_backend, priority_model in HEADLESS_BACKEND_PRIORITY:
+            if priority_backend == backend:
+                return priority_model
+        provider_info = self.PROVIDERS.get(backend, {})
+        return provider_info.get("default_model", "")
 
     def run_quickstart(self, quickstart_config_filename: str | None = None) -> tuple | None:
         """Run simplified quickstart flow - just agents count and backend/model for each.

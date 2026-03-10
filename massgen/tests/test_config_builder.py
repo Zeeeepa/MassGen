@@ -671,5 +671,137 @@ class TestQuickstartConfigPathHelpers:
         assert path == fake_home / ".config" / "massgen" / "global-name.yaml"
 
 
+class TestHeadlessQuickstartMultiBackend:
+    """Test multi-backend headless quickstart support."""
+
+    @pytest.fixture
+    def builder(self):
+        return ConfigBuilder()
+
+    def test_resolve_default_model_from_priority_list(self, builder):
+        """Backends in HEADLESS_BACKEND_PRIORITY use priority model."""
+        model = builder._resolve_default_model("claude")
+        assert model  # Should find a model
+        assert "claude" in model.lower() or "sonnet" in model.lower() or "opus" in model.lower()
+
+    def test_resolve_default_model_fallback_to_provider(self, builder):
+        """Backends not in priority list fall back to provider default."""
+        model = builder._resolve_default_model("gemini")
+        assert model  # Should find a model from provider info
+
+    def test_multi_backend_comma_parsing(self, builder, tmp_path, monkeypatch):
+        """Comma-separated backends are parsed into a list."""
+        # Mock API keys as available for all requested backends
+        monkeypatch.setattr(
+            builder,
+            "detect_api_keys",
+            lambda: {"claude": True, "openai": True, "gemini": True},
+        )
+
+        # Mock generate to avoid actual file writes and Docker checks
+        configs_written = []
+
+        def mock_generate(agents_config, **kwargs):
+            configs_written.append(agents_config)
+            return {"agents": agents_config}
+
+        monkeypatch.setattr(builder, "_generate_quickstart_config", mock_generate)
+
+        result = builder.run_quickstart_headless(
+            output_dir=str(tmp_path),
+            backend_override="claude,openai,gemini",
+            model_override="claude-opus-4-6,gpt-5.4,gemini-3-flash-preview",
+            use_docker=False,
+        )
+
+        assert result["success"]
+        assert result["backends"] == ["claude", "openai", "gemini"]
+        assert result["models"] == ["claude-opus-4-6", "gpt-5.4", "gemini-3-flash-preview"]
+        # Should have created 3 agents (one per backend)
+        assert len(configs_written) == 1
+        assert len(configs_written[0]) == 3
+
+    def test_multi_backend_missing_models_use_defaults(self, builder, tmp_path, monkeypatch):
+        """When fewer models than backends, defaults are used."""
+        monkeypatch.setattr(
+            builder,
+            "detect_api_keys",
+            lambda: {"claude": True, "openai": True},
+        )
+
+        configs_written = []
+
+        def mock_generate(agents_config, **kwargs):
+            configs_written.append(agents_config)
+            return {"agents": agents_config}
+
+        monkeypatch.setattr(builder, "_generate_quickstart_config", mock_generate)
+
+        result = builder.run_quickstart_headless(
+            output_dir=str(tmp_path),
+            backend_override="claude,openai",
+            model_override="claude-opus-4-6",  # Only one model for two backends
+            use_docker=False,
+        )
+
+        assert result["success"]
+        assert result["backends"] == ["claude", "openai"]
+        assert len(result["models"]) == 2
+        assert result["models"][0] == "claude-opus-4-6"
+        # Second model should be the default for openai
+        assert result["models"][1]  # Non-empty default
+
+    def test_multi_backend_missing_key_fails(self, builder, tmp_path, monkeypatch):
+        """Multi-backend fails when one backend has no API key."""
+        monkeypatch.setattr(
+            builder,
+            "detect_api_keys",
+            lambda: {"claude": True, "openai": False, "gemini": True},
+        )
+
+        result = builder.run_quickstart_headless(
+            output_dir=str(tmp_path),
+            backend_override="claude,openai,gemini",
+            use_docker=False,
+        )
+
+        assert not result["success"]
+        assert any("openai" in step for step in result["manual_steps"])
+
+    def test_single_backend_still_works(self, builder, tmp_path, monkeypatch):
+        """Single backend (no comma) still uses original code path."""
+        monkeypatch.setattr(
+            builder,
+            "detect_api_keys",
+            lambda: {"claude": True},
+        )
+
+        generated = []
+
+        def mock_programmatic(output_path, num_agents, backend_type, model, **kwargs):
+            generated.append({"backend": backend_type, "model": model, "n": num_agents})
+            # Write a minimal file so the path check passes
+            import pathlib
+
+            pathlib.Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(output_path).write_text("agents: []")
+            return True
+
+        monkeypatch.setattr(builder, "generate_config_programmatic", mock_programmatic)
+
+        result = builder.run_quickstart_headless(
+            output_dir=str(tmp_path),
+            backend_override="claude",
+            model_override="claude-opus-4-6",
+            use_docker=False,
+        )
+
+        assert result["success"]
+        assert result["backends"] is None  # Not multi-backend
+        assert result["backend"] == "claude"
+        assert len(generated) == 1
+        assert generated[0]["backend"] == "claude"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
