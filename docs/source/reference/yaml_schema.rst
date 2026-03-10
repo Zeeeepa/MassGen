@@ -636,7 +636,7 @@ Backend
      - string
      - Yes
      - All
-     - Backend type: ``claude``, ``claude_code``, ``codex``, ``gemini``, ``gemini_cli``, ``openai``, ``grok``, ``azure_openai``, ``zai``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``, ``ag2`` 
+     - Backend type: ``claude``, ``claude_code``, ``codex``, ``gemini``, ``gemini_cli``, ``openai``, ``grok``, ``azure_openai``, ``zai``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``, ``ag2``
    * - ``model``
      - string
      - Yes
