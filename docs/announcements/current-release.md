@@ -7,8 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling. Skills repo: https://github.com/massgen/skills
-
+We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling.
 ## Install
 
 ```bash
@@ -29,8 +28,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling. Skills repo: https://github.com/massgen/skills
-
+We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling.
 **Key Improvement:**
 
 🎯 **Ensemble Pattern** - Subagents now coordinate as an ensemble by default:
