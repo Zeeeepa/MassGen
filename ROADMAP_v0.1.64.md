@@ -1,10 +1,10 @@
-# MassGen v0.1.63 Roadmap
+# MassGen v0.1.64 Roadmap
 
-**Target Release:** March 13, 2026
+**Target Release:** March 16, 2026
 
 ## Overview
 
-Version 0.1.63 focuses on adding a Gemini CLI backend (rolled from v0.1.62) and exploring image/video editing capabilities. The Gemini CLI backend was originally planned for v0.1.62 but rolled forward as that release delivered the MassGen Skill & Viewer instead.
+Version 0.1.64 focuses on adding a Gemini CLI backend. The Gemini CLI backend was originally planned for earlier releases but rolled forward as v0.1.63 delivered the Ensemble & Contracts improvements instead.
 
 ---
 
@@ -23,23 +23,7 @@ Version 0.1.63 focuses on adding a Gemini CLI backend (rolled from v0.1.62) and 
 
 ---
 
-## Feature: Image/Video Edit Capabilities
-
-**Issue:** [#959](https://github.com/massgen/MassGen/issues/959)
-**Owner:** @ncrispino
-
-### Goals
-
-- **Image/Video Editing**: Check and support image/video editing capabilities across providers
-
-### Success Criteria
-
-- [ ] Image editing capabilities verified and supported
-- [ ] Video editing capabilities verified and supported
-
----
-
 ## Related Tracks
 
-- **v0.1.62**: MassGen Skill & Viewer — general-purpose multi-agent skill, session viewer, backend improvements ([#992](https://github.com/massgen/MassGen/pull/992))
-- **v0.1.64**: OpenAI Audio API ([#960](https://github.com/massgen/MassGen/issues/960))
+- **v0.1.63**: Ensemble & Contracts — ensemble pattern defaults, transformation pressure, success contracts, lighter refinement ([#996](https://github.com/massgen/MassGen/pull/996))
+- **v0.1.65**: Image/Video Edit Capabilities ([#959](https://github.com/massgen/MassGen/issues/959))
