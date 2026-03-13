@@ -7,7 +7,8 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling.
+We're excited to release MassGen v0.1.63 — Round Evaluator Contracts! 🚀 MassGen now supports improved critique and toggling the level of changes in the round evaluator, with transformation pressure and success contracts for deeper quality. Plus: subagents run as an ensemble by default with lighter refinement, and killed agent handling.
+
 ## Install
 
 ```bash
@@ -28,16 +29,17 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling.
+We're excited to release MassGen v0.1.63 — Round Evaluator Contracts! 🚀 MassGen now supports improved critique and toggling the level of changes in the round evaluator, with transformation pressure and success contracts for deeper quality. Plus: subagents run as an ensemble by default with lighter refinement, and killed agent handling.
+
 **Key Improvement:**
 
-🎯 **Ensemble Pattern** - Subagents now coordinate as an ensemble by default:
-- `disable_injection` and `defer_voting_until_all_answered` default to true — subagents work independently before voting, producing more diverse and higher-quality results
-- Lighter refinement prompts reduce token overhead for subagent workflows
-- Ensemble defaults apply automatically when spawning subagent orchestrators, no config changes needed
+🔄 **Round Evaluator Contracts** - Improved critique with configurable transformation levels:
+- Transformation pressure pushes agents toward meaningful structural changes rather than surface edits
+- Success contracts define explicit quality gates agents must satisfy before convergence
+- Verification replay ensures evaluation consistency across rounds
 
 **Plus:**
-- 🔄 **Transformation pressure & success contracts** — round evaluator pushes agents toward meaningful structural changes and defines explicit quality gates before convergence
+- 🎯 **Subagent ensemble by default** — `disable_injection` and `defer_voting_until_all_answered` default to true, subagents work independently with lighter refinement before voting
 - 🛡️ **Killed agent handling** — graceful management of agents that time out or fail mid-round
 - 🔧 **Timeout fallback** — more robust coordination at timeout boundaries
 
