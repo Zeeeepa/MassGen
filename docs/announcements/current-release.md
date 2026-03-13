@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, lighter refinement, and killed agent handling. Skills repo: https://github.com/massgen/skills
+We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling. Skills repo: https://github.com/massgen/skills
 
 ## Install
 
@@ -29,17 +29,17 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, lighter refinement, and killed agent handling. Skills repo: https://github.com/massgen/skills
+We're excited to release MassGen v0.1.63 — Subagent Ensemble! 🚀 Subagents now run as an ensemble by default: each works independently with lighter refinement before voting, producing more diverse and higher-quality results. Plus: round evaluator transformation pressure & success contracts, and killed agent handling. Skills repo: https://github.com/massgen/skills
 
 **Key Improvement:**
 
 🎯 **Ensemble Pattern** - Subagents now coordinate as an ensemble by default:
 - `disable_injection` and `defer_voting_until_all_answered` default to true — subagents work independently before voting, producing more diverse and higher-quality results
+- Lighter refinement prompts reduce token overhead for subagent workflows
 - Ensemble defaults apply automatically when spawning subagent orchestrators, no config changes needed
 
 **Plus:**
 - 🔄 **Transformation pressure & success contracts** — round evaluator pushes agents toward meaningful structural changes and defines explicit quality gates before convergence
-- ⚡ **Lighter refinement** — reduced token overhead for subagent workflows
 - 🛡️ **Killed agent handling** — graceful management of agents that time out or fail mid-round
 - 🔧 **Timeout fallback** — more robust coordination at timeout boundaries
 
