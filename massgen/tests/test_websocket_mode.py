@@ -621,8 +621,8 @@ class TestWebSocketFallbackParity:
             backend._create_client()
 
         call_kwargs = mock_openai.call_args
-        assert call_kwargs[1].get("base_url") == "https://custom.api.example.com/v1", "_create_client must forward base_url"
-        assert call_kwargs[1].get("organization") == "org-custom", "_create_client must forward organization"
+        assert call_kwargs[1].get("base_url") == "https://custom.api.example.com/v1"
+        assert call_kwargs[1].get("organization") == "org-custom"
 
     @pytest.mark.asyncio
     async def test_create_response_stream_falls_to_http_when_transport_disconnected(
