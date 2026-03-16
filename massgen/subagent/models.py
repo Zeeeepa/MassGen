@@ -741,13 +741,24 @@ class RoundEvaluatorResult:
 
         incremental_override_reason = str(next_tasks.get("incremental_override_reason") or "").strip()
         if ceiling_status in {"ceiling_approaching", "ceiling_reached"} and strategy_mode == "incremental_refinement" and not incremental_override_reason:
-            return None
+            # Soft validation: accept the payload with a default reason rather
+            # than discarding valid task data over a missing metadata field.
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "next_tasks payload has %s + incremental_refinement but no " "incremental_override_reason — defaulting to placeholder",
+                ceiling_status,
+            )
+            incremental_override_reason = "Evaluator did not provide override reasoning"
 
         tasks = next_tasks.get("tasks")
         if not isinstance(tasks, list) or not tasks:
             return None
 
         normalized = copy.deepcopy(next_tasks)
+        # Backfill the default override reason if it was populated above.
+        if incremental_override_reason and not str(normalized.get("incremental_override_reason") or "").strip():
+            normalized["incremental_override_reason"] = incremental_override_reason
         thesis_shift_task_count = 0
         for task in normalized.get("tasks", []):
             if not isinstance(task, dict):
@@ -868,6 +879,11 @@ class RoundEvaluatorResult:
         if workspace_path:
             workspace = Path(workspace_path)
             _add_candidate(workspace / artifact_name, priority=0)
+            # Inner agent directories (subagent_orchestrator layout):
+            # When the round evaluator runs as a multi-agent MassGen instance,
+            # the winning agent writes artifacts into workspace/agent_<id>/.
+            for candidate in workspace.glob(f"agent_*/{artifact_name}"):
+                _add_candidate(candidate, priority=5)
             for pattern in (
                 f".massgen/sessions/*/turn_*/workspace/{artifact_name}",
                 f".massgen/massgen_logs/*/turn_*/final/*/workspace/{artifact_name}",
