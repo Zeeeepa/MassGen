@@ -200,6 +200,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.64 (March 16, 2026)** - Gemini CLI Backend
+
+Gemini CLI as a first-class backend with session persistence, MCP tools, and Docker support. WebSocket streaming for OpenAI Response API. Execution trace analyzer subagent. Copilot Docker mode.
+
 **v0.1.63 (March 13, 2026)** - Ensemble & Contracts
 
 Subagent ensemble pattern with ``disable_injection`` and ``defer_voting_until_all_answered`` as defaults. Round evaluator transformation pressure and success contracts. Lighter refinement for subagents. Killed agent handling.
@@ -207,10 +211,6 @@ Subagent ensemble pattern with ``disable_injection`` and ``defer_voting_until_al
 **v0.1.62 (March 11, 2026)** - MassGen Skill & Viewer
 
 New general-purpose MassGen Skill with 4 modes (general, evaluate, plan, spec) for use from Claude Code and other AI agents. Session viewer for real-time observation of automation runs. Backend improvements for Claude Code, Codex, and Copilot. Headless and web quickstart modes for automated setup.
-
-**v0.1.61 (March 9, 2026)** - Round Evaluator Paradigm
-
-New round evaluator subagent type that delegates evaluation to specialized evaluator subagents for deeper quality assessment. Major orchestrator refactoring with improved evaluation prompts, task plan injection, and subagent fixes.
 
 :doc:`Full changelog → <changelog>`
 
