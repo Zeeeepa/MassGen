@@ -62,6 +62,7 @@ from .backend.claude_code import ClaudeCodeBackend
 from .backend.codex import CodexBackend
 from .backend.copilot import CopilotBackend
 from .backend.gemini import GeminiBackend
+from .backend.gemini_cli import GeminiCLIBackend
 from .backend.grok import GrokBackend
 from .backend.inference import InferenceBackend
 from .backend.lmstudio import LMStudioBackend
@@ -2443,6 +2444,13 @@ def create_backend(backend_type: str, **kwargs) -> Any:
 
         return CodexBackend(**kwargs)
 
+    elif backend_type == "gemini_cli":
+        # GeminiCLIBackend using Google Gemini CLI subprocess wrapper
+        # Authentication: CLI login (gemini) or GOOGLE_API_KEY/GEMINI_API_KEY
+        # Requires: npm install -g @google/gemini-cli
+
+        return GeminiCLIBackend(**kwargs)
+
     elif backend_type == "azure_openai":
         api_key = kwargs.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY")
         endpoint = kwargs.get("base_url") or os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -2707,6 +2715,8 @@ def create_agents_from_config(
             agent_config = AgentConfig.create_sglang_config(**backend_params)
         elif backend_type_lower == "claude_code":
             agent_config = AgentConfig.create_claude_code_config(**backend_params)
+        elif backend_type_lower == "gemini_cli":
+            agent_config = AgentConfig(backend_params=backend_params)
         elif backend_type_lower == "copilot":
             # Copilot maps to standard Config with minimal params?
             # Or dedicated config if needed. For now standard.
@@ -2763,6 +2773,7 @@ def create_agents_from_config(
                 "claude": "anthropic",
                 "google": "google",
                 "gemini": "google",
+                "gemini_cli": "google",
             }
             provider = provider_map.get(backend_type_lower, backend_type_lower)
 
@@ -3547,6 +3558,7 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         round_evaluator_skip_synthesis=coord_cfg.get("round_evaluator_skip_synthesis", False),
         round_evaluator_refine=coord_cfg.get("round_evaluator_refine", False),
         round_evaluator_transformation_pressure=coord_cfg.get("round_evaluator_transformation_pressure", "balanced"),
+        enable_execution_trace_analyzer=coord_cfg.get("enable_execution_trace_analyzer", False),
         enable_quality_rethink_on_iteration=coord_cfg.get("enable_quality_rethink_on_iteration", False),
         enable_novelty_on_iteration=coord_cfg.get("enable_novelty_on_iteration", False),
         novelty_injection=coord_cfg.get("novelty_injection", "none"),
@@ -10670,6 +10682,7 @@ Environment Variables:
             "chatcompletion",
             "claude",
             "gemini",
+            "gemini_cli",
             "grok",
             "openai",
             "azure_openai",

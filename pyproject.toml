@@ -73,6 +73,7 @@ dependencies = [
     "github-copilot-sdk>=0.1.0",
     "gitpython>=3.1.46",
     "pytest-textual-snapshot>=1.1.0",
+    "websockets>=14.0",
 ]
 
 [project.optional-dependencies]
@@ -245,6 +246,7 @@ ignore_errors = true
 minversion = "7.0"
 addopts = "-ra -q --strict-markers --strict-config"
 testpaths = ["massgen/tests"]
+norecursedirs = ["_wip", ".git", "__pycache__", ".venv", "node_modules"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

@@ -39,7 +39,7 @@ def _remove_readonly(func, path, _exc_unused):
     callback (func, path, exc_info) and the ``onexc`` callback
     (func, path, exc) introduced in Python 3.12.
     """
-    os.chmod(path, stat.S_IWRITE)
+    os.chmod(path, stat.S_IRWXU)
     func(path)
 
 
@@ -124,7 +124,7 @@ def git_commit_if_changed(workspace: Path, message: str) -> bool:
         return False
 
 
-_WORKSPACE_METADATA_DIRS = frozenset({".git", ".codex", ".massgen", "memory"})
+_WORKSPACE_METADATA_DIRS = frozenset({".git", ".codex", ".gemini", ".massgen", "memory"})
 
 
 def has_meaningful_content(path: Path | None) -> bool:

@@ -346,6 +346,7 @@ class LLMBackend(ABC):
             "round_evaluator_transformation_pressure",  # Coordination-only bias for evaluator thesis boldness
             "enable_quality_rethink_on_iteration",  # Coordination-only quality task injection toggle
             "enable_novelty_on_iteration",  # Coordination-only novelty task injection toggle
+            "enable_execution_trace_analyzer",  # Coordination-only execution trace analysis toggle
             "novelty_injection",  # Novelty pressure level (none/gentle/moderate/aggressive)
             "improvements",  # propose_improvements gate settings (orchestrator/checklist only)
             "learning_capture_mode",  # Learning capture timing (round/verification_and_final_only/final_only)
@@ -378,6 +379,8 @@ class LLMBackend(ABC):
             "fairness_enabled",
             "fairness_lead_cap_answers",
             "max_midstream_injections_per_round",
+            # WebSocket mode (transport control, not an API parameter)
+            "websocket_mode",
             "defer_peer_updates_until_restart",
             "allow_midstream_peer_updates_before_checklist_submit",
             "max_checklist_calls_per_round",

@@ -186,7 +186,7 @@ class Orchestrator(ChatAgent):
 
     # TODO: derive this cap dynamically from model context limits per backend.
     _ENFORCEMENT_RETRY_BUFFER_MAX_CHARS = 120_000
-    _ROUND_EVALUATOR_MAX_LAUNCH_FAILURES = 1
+    _ROUND_EVALUATOR_MAX_LAUNCH_FAILURES = 2
 
     def __init__(
         self,
@@ -355,6 +355,9 @@ class Orchestrator(ChatAgent):
         self._isolation_removed_paths: dict = {}  # original_path -> ManagedPath
         # Rework signal from review modal (set by _review_isolated_changes, consumed by caller)
         self._pending_review_rework: dict[str, Any] | None = None
+
+        # TUI coordination UI (set externally by CoordinationUI.set_orchestrator())
+        self.coordination_ui: Any | None = None
 
         # Human input hook for injecting user input during execution
         # Shared across all agents (one per orchestration session)
@@ -5742,6 +5745,7 @@ Your answer:"""
                                 content="",
                             )
                         if result_type == "answer":
+                            result_data = self._coerce_answer_content_to_text(result_data)
                             # Agent provided an answer (initial or improved)
                             agent = self.agents.get(agent_id)
                             # Get the context that was sent to this agent
@@ -6222,7 +6226,9 @@ Your answer:"""
 
             # Update answers for agents that provided them
             for agent_id, answer in answered_agents.items():
-                self.agent_states[agent_id].answer = answer
+                self.agent_states[agent_id].answer = self._coerce_answer_content_to_text(
+                    answer,
+                )
 
             # Update status based on what actions agents took
             for agent_id in completed_agent_ids:
@@ -8864,6 +8870,145 @@ Your answer:"""
             self._call_subagent_mcp_tool_async(parent_agent_id, tool_name, params),
         )
 
+    def _has_subagent_mcp_for_agent(self, agent_id: str) -> bool:
+        """Return True if *agent_id* has a connected subagent MCP server.
+
+        The subagent MCP server is only injected when the agent has a valid
+        ``filesystem_manager`` (see ``_inject_subagent_tools_for_agent``).
+        Agents without one (e.g. codex backend with no explicit ``cwd``)
+        need the direct spawn fallback.
+        """
+        agent = self.agents.get(agent_id)
+        if not agent:
+            return False
+        fs_mgr = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
+        return fs_mgr is not None
+
+    async def _direct_spawn_subagents(
+        self,
+        parent_agent_id: str,
+        tasks: list[dict[str, Any]],
+        refine: bool = True,
+    ) -> dict[str, Any]:
+        """Spawn subagents using the MCP server's logic directly.
+
+        Configures the MCP module globals and calls ``spawn_subagents_direct``
+        so that context-path normalization, temp-workspace auto-mounting, and
+        specialized-type resolution all use the **same code path** as
+        MCP-routed spawns — no duplicated logic.
+
+        Uses the parent agent's existing workspace when available, matching
+        the normal MCP-based subagent spawning path.  Falls back to creating
+        a workspace under ``.massgen/workspaces/`` (same location the CLI
+        uses for agent workspaces) when the parent has no filesystem_manager.
+        """
+        import uuid as _uuid
+
+        from .mcp_tools.subagent import _subagent_mcp_server as mcp_mod
+
+        # --- Resolve workspace root ---
+        # Prefer the parent agent's existing workspace (same as the MCP path).
+        # Fall back to .massgen/workspaces/ when no filesystem_manager exists.
+        agent = self.agents.get(parent_agent_id)
+        fs_mgr = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
+        if fs_mgr and fs_mgr.cwd:
+            ws_root = Path(fs_mgr.cwd).resolve()
+        else:
+            spawn_id = _uuid.uuid4().hex[:8]
+            ws_root = (Path(".massgen") / "workspaces" / f"direct_spawn_{parent_agent_id}_{spawn_id}").resolve()
+            ws_root.mkdir(parents=True, exist_ok=True)
+
+        # Write subagent type dirs and CONTEXT.md so the MCP module can
+        # resolve specialized types from the workspace.
+        self._write_subagent_type_dirs(ws_root)
+        self._ensure_context_md_for_round_evaluator(ws_root, parent_agent_id)
+
+        # --- Build parent agent configs ---
+        agent_configs: list[dict[str, Any]] = []
+        for aid, a in self.agents.items():
+            agent_cfg: dict[str, Any] = {"id": aid}
+            if hasattr(a.backend, "config"):
+                backend_cfg = {k: v for k, v in a.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+                agent_cfg["backend"] = backend_cfg
+            agent_configs.append(agent_cfg)
+
+        # --- Subagent orchestrator config ---
+        coord_cfg = getattr(self.config, "coordination_config", None)
+        sub_orch_config = getattr(coord_cfg, "subagent_orchestrator", None)
+        if isinstance(sub_orch_config, dict):
+            from .subagent.models import SubagentOrchestratorConfig as _SOC
+
+            sub_orch_config = _SOC(**sub_orch_config)
+
+        # --- Log directory ---
+        # Use the active log session dir so SubagentManager writes to
+        # log_session_dir/subagents/<id>/ where the TUI can find them.
+        log_dir: str | None = None
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            _log_session = get_log_session_dir()
+            if _log_session:
+                log_dir = str(_log_session)
+        except Exception:
+            pass
+        if not log_dir:
+            if hasattr(self, "_log_dir") and self._log_dir:
+                log_dir = str(self._log_dir)
+            elif hasattr(self, "log_directory") and self.log_directory:
+                log_dir = str(self.log_directory)
+
+        # --- Parent context paths (allowed roots for path validation) ---
+        parent_context_paths: list[dict[str, str]] = []
+        agent = self.agents.get(parent_agent_id)
+        if agent and hasattr(agent.backend, "config"):
+            raw_ctx = agent.backend.config.get("context_paths", [])
+            if isinstance(raw_ctx, list):
+                for entry in raw_ctx:
+                    if isinstance(entry, str):
+                        parent_context_paths.append(
+                            {"path": entry, "permission": "read"},
+                        )
+                    elif isinstance(entry, dict) and "path" in entry:
+                        parent_context_paths.append(entry)
+
+        # Resolve temp workspace to absolute; only include if it exists.
+        orch_temp = getattr(self, "_agent_temporary_workspace", None)
+        orch_temp_resolved: str | None = None
+        if orch_temp:
+            _resolved = Path(orch_temp).resolve()
+            if _resolved.exists():
+                orch_temp_resolved = str(_resolved)
+                parent_context_paths.append(
+                    {"path": orch_temp_resolved, "permission": "read"},
+                )
+
+        # --- Timeout from config ---
+        configured_timeout = getattr(coord_cfg, "subagent_default_timeout", 600) if coord_cfg else 600
+
+        # --- Configure MCP module globals and spawn ---
+        saved = mcp_mod.configure_direct_spawn(
+            workspace_path=ws_root,
+            parent_agent_id=parent_agent_id,
+            orchestrator_id=getattr(self, "orchestrator_id", "unknown"),
+            parent_agent_configs=agent_configs,
+            subagent_orchestrator_config=sub_orch_config,
+            log_directory=log_dir,
+            agent_temporary_workspace=orch_temp_resolved,
+            parent_context_paths=parent_context_paths,
+            parent_coordination_config=(coord_cfg.__dict__ if coord_cfg and hasattr(coord_cfg, "__dict__") else None),
+            default_timeout=configured_timeout,
+            max_timeout=int(configured_timeout * 1.5),
+        )
+        try:
+            return await mcp_mod.spawn_subagents_direct(
+                tasks=tasks,
+                refine=refine,
+                timeout_override=configured_timeout,
+            )
+        finally:
+            mcp_mod.reset_direct_spawn(saved)
+
     def _send_runtime_message_via_direct_inbox_write(
         self,
         parent_agent_id: str,
@@ -9621,6 +9766,23 @@ Your answer:"""
         if agent_hooks:
             manager.register_hooks_from_config(agent_hooks, agent_id=agent_id)
 
+        # Register PathPermissionManagerHook for PRE_TOOL_USE validation.
+        # Native backends like Copilot need MassGen-level path validation.
+        # Claude Code already handles permissions via add_dirs, so skip it.
+        backend_provider = agent.backend.get_provider_name() if hasattr(agent.backend, "get_provider_name") else ""
+        if backend_provider != "claude_code":
+            _fm = getattr(agent.backend, "filesystem_manager", None)
+            if _fm:
+                _ppm = getattr(_fm, "path_permission_manager", None)
+                if _ppm:
+                    from massgen.filesystem_manager import PathPermissionManagerHook
+
+                    ppm_hook = PathPermissionManagerHook(_ppm)
+                    manager.register_global_hook(HookType.PRE_TOOL_USE, ppm_hook)
+                    logger.debug(
+                        f"[Orchestrator] Registered PathPermissionManagerHook (PRE_TOOL_USE) for {agent_id}",
+                    )
+
         # Create context factory for hooks
         def context_factory() -> dict[str, Any]:
             workspace_path = None
@@ -9677,9 +9839,50 @@ Your answer:"""
             f"[Orchestrator] Set up native hooks for {agent_id}: " f"PreToolUse={len(native_config.get('PreToolUse', []))}, " f"PostToolUse={len(native_config.get('PostToolUse', []))} hooks",
         )
 
+    @classmethod
+    def _coerce_answer_content_to_text(cls, content: Any) -> str:
+        """Normalize heterogeneous answer payloads into plain text."""
+        if content is None:
+            return ""
+
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            parts = [cls._coerce_answer_content_to_text(item).strip() for item in content]
+            return "\n".join(part for part in parts if part)
+
+        if isinstance(content, dict):
+            for key in (
+                "content",
+                "description",
+                "text",
+                "message",
+                "answer",
+                "final_answer",
+                "summary",
+                "output",
+            ):
+                if key not in content:
+                    continue
+                text = cls._coerce_answer_content_to_text(content.get(key)).strip()
+                if text:
+                    return text
+
+            title = cls._coerce_answer_content_to_text(content.get("title")).strip()
+            if title:
+                return title
+
+            try:
+                return json.dumps(content, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                return str(content)
+
+        return str(content)
+
     def _normalize_workspace_paths_in_answers(
         self,
-        answers: dict[str, str],
+        answers: dict[str, Any],
         viewing_agent_id: str | None = None,
     ) -> dict[str, str]:
         """Normalize absolute workspace paths in agent answers to accessible temporary workspace paths.
@@ -9715,7 +9918,7 @@ Your answer:"""
         agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
 
         for agent_id, answer in answers.items():
-            normalized_answer = answer
+            normalized_answer = self._coerce_answer_content_to_text(answer)
 
             # Replace all workspace paths found in the answer with accessible paths
             for other_agent_id, other_agent in self.agents.items():
@@ -9747,7 +9950,7 @@ Your answer:"""
 
     def _normalize_workspace_paths_for_comparison(
         self,
-        content: str,
+        content: Any,
         replacement_path: str = "/workspace",
     ) -> str:
         """
@@ -9763,7 +9966,7 @@ Your answer:"""
         Returns:
             Content with all workspace paths normalized to canonical form
         """
-        normalized_content = content
+        normalized_content = self._coerce_answer_content_to_text(content)
 
         # Replace all agent workspace paths with canonical '/workspace/'
         for _, agent in self.agents.items():
@@ -9887,8 +10090,8 @@ Your answer:"""
 
     def _check_answer_novelty(
         self,
-        new_answer: str,
-        existing_answers: dict[str, str],
+        new_answer: Any,
+        existing_answers: dict[str, Any],
     ) -> tuple[bool, str | None]:
         """Check if a new answer is sufficiently different from existing answers.
 
@@ -9917,9 +10120,14 @@ Your answer:"""
                 f"approaches, or tools, or {terminal_action}."
             )
 
+        normalized_new_answer = self._coerce_answer_content_to_text(new_answer)
+
         # Check similarity against all existing answers
         for agent_id, existing_answer in existing_answers.items():
-            similarity = self._calculate_jaccard_similarity(new_answer, existing_answer)
+            similarity = self._calculate_jaccard_similarity(
+                normalized_new_answer,
+                self._coerce_answer_content_to_text(existing_answer),
+            )
             if similarity > threshold:
                 logger.info(
                     f"[Orchestrator] Answer rejected: {similarity:.2%} similar to {agent_id}'s answer (threshold: {threshold:.0%})",
@@ -10850,7 +11058,10 @@ Your answer:"""
             if not type_name:
                 continue
             lowered = type_name.lower()
-            if lowered == "round_evaluator" or lowered in seen:
+            # Exclude analytical subagent types — they observe and report,
+            # they don't execute fix/evolution tasks.
+            analytical_types = {"round_evaluator", "execution_trace_analyzer"}
+            if lowered in analytical_types or lowered in seen:
                 continue
             seen.add(lowered)
             targets.append(type_name)
@@ -10873,6 +11084,10 @@ Your answer:"""
             resolved = str(Path(normalized).resolve()) if normalized else normalized
             if resolved in seen:
                 return
+            # Skip non-existent paths — the MassGen subprocess validates
+            # context paths exist and fails hard if they don't.
+            if not Path(resolved).exists():
+                return
             seen.add(resolved)
             context_paths.append(resolved)
 
@@ -10892,6 +11107,40 @@ Your answer:"""
             _add(getattr(filesystem_manager, "cwd", None))
 
         _add(self._agent_temporary_workspace)
+        return context_paths
+
+    def _get_trace_analyzer_context_paths(
+        self,
+        parent_agent_id: str,
+    ) -> list[str]:
+        """Collect focused context paths for the execution_trace_analyzer.
+
+        Unlike the round_evaluator which needs the full workspace, the trace
+        analyzer only needs access to the agent's snapshot directory (which
+        contains ``execution_trace.md``).  Giving it the full workspace root
+        leaks ``subagents/`` contents (round_eval data, etc.).
+        """
+        context_paths: list[str] = []
+        seen: set[str] = set()
+
+        def _add(path_value: Any) -> None:
+            normalized = str(path_value or "").strip()
+            if not normalized or normalized in seen:
+                return
+            resolved = str(Path(normalized).resolve()) if normalized else normalized
+            if resolved in seen:
+                return
+            if not Path(resolved).exists():
+                return
+            seen.add(resolved)
+            context_paths.append(resolved)
+
+        # Primary: agent-specific snapshot directory with execution_trace.md.
+        if self._snapshot_storage:
+            agent_snapshot = Path(self._snapshot_storage) / parent_agent_id
+            if agent_snapshot.exists():
+                _add(str(agent_snapshot))
+
         return context_paths
 
     def _emit_round_evaluator_spawn_event(
@@ -11450,6 +11699,59 @@ Your answer:"""
         self._round_evaluator_completed_labels[parent_agent_id] = latest_labels
         return True
 
+    @staticmethod
+    def _split_combined_spawn_result(
+        combined: dict[str, Any],
+        evaluator_subagent_id: str,
+        trace_subagent_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Split a combined spawn result into separate evaluator and trace dicts.
+
+        When the round_evaluator and execution_trace_analyzer are spawned in a
+        single ``spawn_subagents`` call the result payload contains entries for
+        both.  This helper partitions them by matching ``subagent_id`` so that
+        downstream processing can handle each independently.
+
+        Returns:
+            (evaluator_result_dict, trace_result_dict) — each shaped like a
+            top-level spawn result with ``success``, ``results``, etc.
+        """
+        results = combined.get("results") or []
+        eval_results: list[dict[str, Any]] = []
+        trace_results: list[dict[str, Any]] = []
+        for entry in results:
+            sid = entry.get("subagent_id", "")
+            if sid == trace_subagent_id:
+                trace_results.append(entry)
+            else:
+                eval_results.append(entry)
+
+        base = {k: v for k, v in combined.items() if k != "results"}
+        eval_dict = {**base, "results": eval_results}
+        trace_dict = {
+            **base,
+            "success": bool(trace_results),
+            "results": trace_results,
+        }
+        return eval_dict, trace_dict
+
+    @staticmethod
+    def _format_trace_analyzer_for_memory_static(
+        trace_result: "SubagentResult",
+        round_number: int,
+    ) -> str | None:
+        """Format execution trace analyzer output as a memory block.
+
+        The output starts with YAML frontmatter so the filesystem-based memory
+        parser can pick it up automatically.
+        """
+        report_text = trace_result.answer or ""
+        if not report_text.strip():
+            return None
+
+        frontmatter = "---\n" f"name: execution_trace_round_{round_number}\n" f"description: Process learnings from round {round_number}" " execution trace analysis\n" "tier: short_term\n" "---\n"
+        return f"{frontmatter}\n{report_text}"
+
     async def _run_round_evaluator_pre_round_if_needed(
         self,
         answers: dict[str, str],
@@ -11477,20 +11779,8 @@ Your answer:"""
         display_round = self._get_round_evaluator_display_round(parent_agent_id)
         self._set_round_evaluator_task_mode(parent_agent_id, enabled=False)
 
-        # Re-write subagent type dirs and CONTEXT.md to the workspace — the
-        # workspace may have been cleared between rounds, and the MCP server
-        # rescans lazily.  CONTEXT.md is required by the SubagentManager; the
-        # orchestrator creates it on behalf of the parent since the parent
-        # doesn't know the evaluator spawn is about to happen.
-        parent_agent = self.agents.get(parent_agent_id)
-        if parent_agent:
-            fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
-            if fs_mgr:
-                ws_root = fs_mgr.get_workspace_root() if hasattr(fs_mgr, "get_workspace_root") else getattr(fs_mgr, "cwd", None)
-                if ws_root:
-                    self._write_subagent_type_dirs(ws_root)
-                    self._rewrite_subagent_mcp_config_files(ws_root, parent_agent_id)
-                    self._ensure_context_md_for_round_evaluator(ws_root, parent_agent_id)
+        # Subagent type dirs and CONTEXT.md are written by
+        # _direct_spawn_subagents into the parent agent's workspace.
 
         temp_workspace_path = await self._copy_all_snapshots_to_temp_workspace(parent_agent_id)
         coord_cfg = getattr(self.config, "coordination_config", None)
@@ -11502,11 +11792,13 @@ Your answer:"""
         )
         pressure_label = getattr(coord_cfg, "round_evaluator_transformation_pressure", "balanced") or "balanced"
         display_subagent_type = f"round_evaluator·{pressure_label}" if pressure_label != "balanced" else "round_evaluator"
+        configured_timeout = getattr(coord_cfg, "subagent_default_timeout", 300) if coord_cfg else 300
         task_payload: dict[str, Any] = {
             "subagent_id": f"round_eval_r{upcoming_round}",
             "task": spawn_task,
             "subagent_type": "round_evaluator",
             "context_paths": spawn_context_paths,
+            "timeout_seconds": configured_timeout,
         }
         spawn_args: dict[str, Any] = {
             "tasks": [task_payload],
@@ -11516,7 +11808,25 @@ Your answer:"""
 
         # TUI display args use the decorated type label so the card shows the pressure level.
         tui_task_payload = {**task_payload, "subagent_type": display_subagent_type}
-        tui_spawn_args = {**spawn_args, "tasks": [tui_task_payload]}
+
+        # --- Execution trace analyzer (runs alongside round_evaluator) ---
+        trace_analyzer_enabled = bool(
+            coord_cfg and getattr(coord_cfg, "enable_execution_trace_analyzer", False),
+        )
+        trace_task_payload: dict[str, Any] | None = None
+        if trace_analyzer_enabled:
+            trace_task_payload = {
+                "subagent_id": f"trace_analyzer_r{upcoming_round}",
+                "task": ("Analyze the main agent's execution trace. " "Identify process inefficiencies, wasted tool calls, and " "patterns the agent should avoid or adopt in subsequent rounds."),
+                "subagent_type": "execution_trace_analyzer",
+                "context_paths": self._get_trace_analyzer_context_paths(parent_agent_id),
+                "timeout_seconds": configured_timeout,
+            }
+        # Build TUI spawn args — include both tasks when trace analyzer is enabled.
+        if trace_analyzer_enabled and trace_task_payload is not None:
+            tui_spawn_args = {**spawn_args, "tasks": [tui_task_payload, trace_task_payload]}
+        else:
+            tui_spawn_args = {**spawn_args, "tasks": [tui_task_payload]}
 
         tool_call_id = f"round_evaluator_pre_round_{parent_agent_id}_r{upcoming_round}_{int(time.time() * 1000)}"
         emitter = get_event_emitter()
@@ -11534,14 +11844,58 @@ Your answer:"""
             args=tui_spawn_args,
         )
 
+        # --- Direct spawn (bypasses MCP routing entirely) ---
+        # The orchestrator owns this spawn decision, so calling SubagentManager
+        # directly is simpler and avoids requiring the parent agent to have an
+        # MCP-connected subagent server (which depends on filesystem_manager).
         started_at = time.time()
-        raw_result = await self._call_subagent_mcp_tool_async(
+        if trace_analyzer_enabled and trace_task_payload is not None:
+            combined_tasks = [task_payload, trace_task_payload]
+        else:
+            combined_tasks = [task_payload]
+
+        raw_result = await self._direct_spawn_subagents(
             parent_agent_id=parent_agent_id,
-            tool_name="spawn_subagents",
-            params=spawn_args,
+            tasks=combined_tasks,
+            refine=evaluator_refine,
         )
         elapsed_seconds = max(0.0, time.time() - started_at)
         normalized_result = raw_result if isinstance(raw_result, dict) else {}
+
+        # When trace analyzer was included, split the combined result.
+        if trace_analyzer_enabled and trace_task_payload is not None:
+            eval_normalized, trace_normalized = self._split_combined_spawn_result(
+                normalized_result,
+                evaluator_subagent_id=f"round_eval_r{upcoming_round}",
+                trace_subagent_id=f"trace_analyzer_r{upcoming_round}",
+            )
+            normalized_result = eval_normalized
+
+            # Process trace analyzer result into memory.
+            if trace_normalized.get("success"):
+                trace_results = trace_normalized.get("results", [])
+                if trace_results:
+                    from .subagent.models import SubagentResult as _SR
+
+                    try:
+                        trace_sub = _SR.from_dict(trace_results[0])
+                        memory_block = self._format_trace_analyzer_for_memory_static(
+                            trace_sub,
+                            upcoming_round,
+                        )
+                        if memory_block:
+                            self._queue_round_start_context_block(parent_agent_id, memory_block)
+                            logger.info(
+                                "[Orchestrator] Queued execution-trace analysis for %s round %s",
+                                parent_agent_id,
+                                upcoming_round,
+                            )
+                    except Exception:
+                        logger.warning(
+                            "[Orchestrator] Failed to parse trace analyzer result for %s",
+                            parent_agent_id,
+                            exc_info=True,
+                        )
         success = bool(normalized_result.get("success"))
         self._emit_round_evaluator_spawn_event(
             phase="complete",
@@ -11554,6 +11908,20 @@ Your answer:"""
             is_error=not success,
             status="success" if success else "error",
         )
+
+        # Notify TUI so subagent cards update to completed/failed status.
+        # Without this, cards stay "running" indefinitely after cancellation.
+        display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+        if display and hasattr(display, "notify_runtime_subagent_completed"):
+            try:
+                display.notify_runtime_subagent_completed(
+                    agent_id=parent_agent_id,
+                    subagent_id=f"round_eval_r{upcoming_round}",
+                    call_id=tool_call_id,
+                    status="completed" if success else "failed",
+                )
+            except Exception:
+                pass
 
         from .subagent.models import RoundEvaluatorResult, SubagentResult
 
@@ -12215,8 +12583,14 @@ Your answer:"""
         # - Inject new answers if they exist (and continue working)
         # - Clear the flag if no new answers exist (agent already has full context)
 
-        # Copy all agents' snapshots to temp workspace for context sharing
-        await self._copy_all_snapshots_to_temp_workspace(agent_id)
+        # Copy all agents' snapshots to temp workspace for context sharing.
+        # Non-fatal: transient permission errors should not abort the round.
+        try:
+            await self._copy_all_snapshots_to_temp_workspace(agent_id)
+        except OSError as e:
+            logger.warning(
+                f"[Orchestrator] Failed to copy snapshots to temp workspace for {agent_id}: {e} — continuing without shared context",
+            )
 
         # Clear the agent's workspace to prepare for new execution
         # This preserves the previous agent's output for logging while giving a clean slate
@@ -13262,7 +13636,9 @@ Your answer:"""
                                 continue
 
                             if tool_name == "new_answer":
-                                content = tool_args.get("content", "")
+                                content = self._coerce_answer_content_to_text(
+                                    tool_args.get("content", ""),
+                                )
                                 yield self._trace_tuple(
                                     f'💡 Providing answer: "{content}"',
                                     kind="coordination",
@@ -13369,13 +13745,17 @@ Your answer:"""
                     elif chunk_type == "error":
                         # Stream error information to user interface
                         error_msg = getattr(chunk, "error", str(chunk.content)) if hasattr(chunk, "error") else str(chunk.content)
-                        yield ("content", f"❌ Error: {error_msg}\n")
+                        is_fatal_backend_error = getattr(chunk, "status", None) == "fatal"
+                        if is_fatal_backend_error:
+                            yield ("error", error_msg)
+                        else:
+                            yield ("content", f"❌ Error: {error_msg}\n")
 
                         # Track API/streaming error in reliability metrics
                         buffer_preview, buffer_chars = self._get_buffer_content(agent)
                         self.coordination_tracker.track_enforcement_event(
                             agent_id=agent_id,
-                            reason="api_error",
+                            reason="fatal_api_error" if is_fatal_backend_error else "api_error",
                             attempt=attempt + 1,
                             max_attempts=max_attempts,
                             tool_calls=[],
@@ -13383,6 +13763,9 @@ Your answer:"""
                             buffer_preview=buffer_preview,
                             buffer_chars=buffer_chars,
                         )
+                        if is_fatal_backend_error:
+                            yield ("done", None)
+                            return
                     elif chunk_type == "incomplete_response_recovery":
                         # Handle incomplete response recovery - API stream ended early
                         # Buffer content is preserved in chunk.content
@@ -13853,7 +14236,9 @@ Your answer:"""
                         elif tool_name == "new_answer":
                             workflow_tool_found = True
                             # Agent provided new answer
-                            content = tool_args.get("content", response_text.strip())
+                            content = self._coerce_answer_content_to_text(
+                                tool_args.get("content", response_text.strip()),
+                            )
 
                             # Check answer count limit
                             can_answer, count_error = self._check_answer_count_limit(
@@ -15447,14 +15832,20 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                         if tool_name == "new_answer":
                             tool_args = agent.backend.extract_tool_arguments(tool_call)
                             if isinstance(tool_args, dict):
-                                submitted_answer = tool_args.get("content", "")
+                                submitted_answer = self._coerce_answer_content_to_text(
+                                    tool_args.get("content", ""),
+                                )
                             elif isinstance(tool_args, str):
                                 import json as _json
 
                                 try:
-                                    submitted_answer = _json.loads(tool_args).get("content", "")
+                                    submitted_answer = self._coerce_answer_content_to_text(
+                                        _json.loads(tool_args).get("content", ""),
+                                    )
                                 except (ValueError, AttributeError):
-                                    submitted_answer = tool_args
+                                    submitted_answer = self._coerce_answer_content_to_text(
+                                        tool_args,
+                                    )
                     # Yield tool calls through so TUI can display them
                     yield StreamChunk(
                         type="tool_calls",
@@ -15485,7 +15876,9 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                     elif clean_answer_content.strip():
                         final_answer = clean_answer_content.strip()
                     else:
-                        final_answer = self.agent_states[selected_agent_id].answer
+                        final_answer = self._coerce_answer_content_to_text(
+                            self.agent_states[selected_agent_id].answer,
+                        )
                     final_context = self.get_last_context(selected_agent_id)
                     await self._save_agent_snapshot(
                         self._selected_agent,
@@ -15586,7 +15979,13 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 self._restore_workspace_from_latest_answer_dir(self._selected_agent)
 
                 # Use clean_answer_content (excludes tool calls/results) for answer.txt
-                final_answer = clean_answer_content.strip() if clean_answer_content.strip() else self.agent_states[selected_agent_id].answer
+                final_answer = (
+                    clean_answer_content.strip()
+                    if clean_answer_content.strip()
+                    else self._coerce_answer_content_to_text(
+                        self.agent_states[selected_agent_id].answer,
+                    )
+                )
                 final_context = self.get_last_context(selected_agent_id)
                 await self._save_agent_snapshot(
                     self._selected_agent,

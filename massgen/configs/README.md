@@ -227,22 +227,29 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.63 - Latest
+### v0.1.64 - Latest
+**New Features:** Gemini CLI Backend
+
+**Key Features:**
+- **Gemini CLI Backend**: New subprocess-based backend for Google's Gemini CLI with session persistence, MCP tools, and Docker support
+- **WebSocket Mode**: Persistent WebSocket transport for OpenAI Response API with auto-reconnection
+- **Execution Trace Analyzer**: New subagent type for mechanistic analysis of agent execution traces
+- **Copilot Docker Mode**: Containerized tool execution for Copilot backend
+
+**Try It:**
+```bash
+pip install massgen==0.1.64
+# Try the Gemini CLI backend
+uv run massgen --config @examples/providers/gemini/gemini_cli_local "Explain quantum computing"
+```
+
+### v0.1.63
 **New Features:** Ensemble & Contracts
 
 **Key Features:**
 - **Ensemble Pattern Defaults**: `disable_injection` and `defer_voting_until_all_answered` now default to true for ensemble-style subagent orchestration
 - **Transformation Pressure**: Round evaluator pushes agents toward meaningful structural changes
 - **Success Contracts**: Explicit quality gates agents must satisfy before convergence
-- **Lighter Refinement**: Subagents use lighter refinement prompts to reduce token overhead
-- **Killed Agent Handling**: Graceful management of agents that time out or fail mid-round
-
-**Try It:**
-```bash
-pip install massgen==0.1.63
-# Try the round evaluator with ensemble defaults
-uv run massgen --config @examples/features/round_evaluator_example.yaml "Create a polished landing page for an AI product"
-```
 
 ### v0.1.62
 **New Features:** MassGen Skill & Viewer
