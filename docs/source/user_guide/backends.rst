@@ -968,13 +968,15 @@ Consider these factors when selecting backends:
 
 .. _native-tool-backends:
 
-Native Tool Backends (Claude Code & Codex)
-------------------------------------------
+Native Tool Backends (Claude Code, Codex & Gemini CLI)
+------------------------------------------------------
 
-MassGen supports two "native tool" backends that wrap CLI/SDK tools rather than just API calls:
-**Claude Code** (Anthropic's Claude Code SDK) and **Codex** (OpenAI's Codex CLI). These backends
-come with their own built-in filesystem and shell tools, providing a more integrated development
-experience but with different security characteristics than API-only backends.
+MassGen supports three "native tool" agent backends that wrap CLI/SDK tools rather than just API
+calls: **Claude Code** (Anthropic's Claude Code SDK), **Codex** (OpenAI's Codex CLI), and
+**Gemini CLI** (Google's Gemini CLI). All three are **agent backends** — they require no API key
+and authenticate via their own CLI login flow. They come with built-in filesystem and shell tools,
+providing a more integrated development experience but with different security characteristics
+than API-only backends.
 
 Architecture Differences
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -984,7 +986,7 @@ Architecture Differences
    :widths: 25 35 40
 
    * - Aspect
-     - Native Tool Backends (Claude Code, Codex)
+     - Agent Backends (Claude Code, Codex, Gemini CLI)
      - API Backends (OpenAI, Claude, Gemini, etc.)
    * - Tool Execution
      - Native tools (Read, Write, Bash) run locally via CLI/SDK
@@ -998,41 +1000,53 @@ Architecture Differences
    * - State Management
      - Stateful (session persistence, conversation history)
      - Stateless (each call is independent)
+   * - Authentication
+     - CLI login (no API key required)
+     - API key required
 
-Claude Code vs Codex Comparison
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Agent Backend Comparison
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: Claude Code vs Codex
+.. list-table:: Claude Code vs Codex vs Gemini CLI
    :header-rows: 1
-   :widths: 20 40 40
+   :widths: 20 27 27 26
 
    * - Feature
      - Claude Code
      - Codex
+     - Gemini CLI
    * - Provider
      - Anthropic (Claude Code SDK)
      - OpenAI (Codex CLI)
+     - Google (Gemini CLI)
    * - Authentication
-     - API key (ANTHROPIC_API_KEY) or subscription
-     - API key (OPENAI_API_KEY) or ChatGPT subscription (OAuth)
+     - Subscription or ``CLAUDE_CODE_API_KEY``; no API key needed
+     - ``codex login`` OAuth; no API key needed
+     - ``gemini`` CLI login (Google account); no API key needed
    * - Models
      - Claude Sonnet 4, Claude Opus 4
-     - GPT-5.4, GPT-5.3-Codex, GPT-5.2-Codex, GPT-5.1-Codex, GPT-5-Codex
+     - GPT-5.4, GPT-5.3-Codex, GPT-5.2-Codex, GPT-5.1-Codex
+     - gemini-2.5-pro, gemini-2.5-flash, gemini-3.1-pro-preview
    * - Native Tools
      - Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch
      - shell, apply_patch, web_search, image_view
+     - ReadFile, WriteFile, RunShellCommand, WebSearch, WebFetch
    * - MCP Support
      - Yes (SDK-native)
      - Yes (via .codex/config.toml)
+     - Yes (via .gemini/settings.json)
    * - Sandbox Type
      - SDK permission hooks
      - OS-level (Seatbelt on macOS, Landlock on Linux)
+     - Process-level (workspace isolation)
    * - **Read Restrictions**
      - **Yes** - SDK hooks block reads outside allowed paths
      - **No** - OS sandbox only restricts writes
+     - **Yes** - workspace-scoped
    * - Write Restrictions
      - Yes - SDK hooks enforce write permissions
      - Yes - OS sandbox restricts writes to writable_roots
+     - Yes - workspace-scoped
 
 .. warning::
 
@@ -1078,7 +1092,7 @@ In Docker mode:
 
 **When Docker is not available**, consider:
 
-1. **Use Claude Code instead** - SDK permission hooks provide read/write restrictions
+1. **Use Claude Code or Gemini CLI instead** - Both provide read/write restrictions via their own permission model
 2. **Limit context_paths** - Only grant access to directories that need agent access
 3. **Avoid sensitive data** - Don't run Codex in directories with credentials or secrets
 4. **Use API-only backends** - For maximum control, use ``openai`` or ``claude`` backends with MCP tools

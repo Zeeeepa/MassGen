@@ -641,6 +641,10 @@ class TestBuildSubprocessEnv:
         assert env["PATHEXT"] == ".COM;.EXE;.BAT;.CMD"
         assert env["COMSPEC"].lower().endswith("\\system32\\cmd.exe")
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="WindowsPath cannot be instantiated on non-Windows",
+    )
     def test_windows_env_keeps_path_when_node_already_resolved(self, backend):
         """Do not prepend node path when node is already resolvable."""
         backend.api_key = None

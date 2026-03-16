@@ -340,7 +340,19 @@ MassGen supports many LLM providers. Use the **slash format** (``provider/model`
    * - Claude Code
      - ``claude_code``
      - ``claude-sonnet-4-5-20250929``
-     - (YAML only)
+     - (YAML only, no API key — subscription or CLI auth)
+   * - Codex
+     - ``codex``
+     - ``gpt-5.4``, ``gpt-5.3-codex``
+     - (YAML only, no API key — ``codex login`` OAuth)
+   * - Gemini CLI
+     - ``gemini_cli``
+     - ``gemini-2.5-pro``, ``gemini-2.5-flash``
+     - (YAML only, no API key — ``gemini`` CLI login)
+   * - GitHub Copilot
+     - ``copilot``
+     - ``gpt-5-mini``, ``claude-sonnet-4``, ``gemini-2.5-pro``
+     - (YAML only, no API key — ``copilot /login``)
    * - Azure OpenAI
      - ``azure_openai``
      - ``gpt-4o`` (deployment name)
@@ -385,9 +397,17 @@ Backend Types (YAML)
 
 For YAML configuration files, use the ``type`` field:
 
+**Agent/CLI backends** (no API key required — use CLI auth):
+
+* ``claude_code`` - Claude Code SDK with dev tools (subscription or ``CLAUDE_CODE_API_KEY``)
+* ``codex`` - OpenAI Codex CLI (``codex login`` OAuth or ``OPENAI_API_KEY``)
+* ``gemini_cli`` - Google Gemini CLI agent (``gemini`` CLI login, no API key needed)
+* ``copilot`` - GitHub Copilot CLI (``copilot /login``, no API key needed)
+
+**API backends:**
+
 * ``openai`` - OpenAI models (GPT-5, GPT-4, etc.)
 * ``claude`` - Anthropic Claude models
-* ``claude_code`` - Claude Code SDK with dev tools
 * ``gemini`` - Google Gemini models
 * ``grok`` - xAI Grok models
 * ``groq`` - Groq inference (ultra-fast)

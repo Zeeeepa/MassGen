@@ -9,6 +9,7 @@ agents:
       cwd: "workspace"
       enable_mcp_command_line: true
       command_line_execution_mode: "docker"
+      command_line_docker_image: massgen/mcp-runtime-sudo:latest
       command_line_docker_enable_sudo: true
       command_line_docker_network_mode: bridge
 
@@ -19,6 +20,7 @@ agents:
       cwd: "workspace"
       enable_mcp_command_line: true
       command_line_execution_mode: "docker"
+      command_line_docker_image: massgen/mcp-runtime-sudo:latest
       command_line_docker_enable_sudo: true
       command_line_docker_network_mode: bridge
 

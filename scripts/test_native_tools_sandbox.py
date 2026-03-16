@@ -93,7 +93,7 @@ def resolve_runner(backend_type: str, requested_runner: str) -> str:
     if requested_runner != "auto":
         return requested_runner
 
-    if backend_type == "copilot":
+    if backend_type in ("copilot", "gemini_cli"):
         return "orchestrator"
 
     return "direct"

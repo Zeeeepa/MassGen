@@ -141,6 +141,13 @@ WORKDIR /workspace
 RUN useradd -m -u 1000 -s /bin/bash massgen && \
     chown -R massgen:massgen /workspace /context /temp_workspaces /app
 
+# On ARM64, install system Chromium (Chrome for Testing has no ARM64 Linux builds).
+RUN ARCH="$(dpkg --print-architecture)" && \
+    if [ "$ARCH" = "arm64" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends chromium && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Switch to non-root user
 USER massgen
 
@@ -152,9 +159,19 @@ ENV PLAYWRIGHT_BROWSERS_PATH="/home/massgen/.cache/ms-playwright"
 RUN python -m playwright install
 
 # Install Agent Browser browser bundle and default skill.
-RUN agent-browser install && \
-    cd /home/massgen && \
-    openskills install vercel-labs/agent-browser --universal -y
+# Chrome for Testing has no ARM64 Linux builds; on ARM64 use system Chromium instead.
+RUN ARCH="$(dpkg --print-architecture)" && \
+    if [ "$ARCH" = "arm64" ]; then \
+        cd /home/massgen && \
+        AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium \
+        openskills install vercel-labs/agent-browser --universal -y && \
+        echo 'export AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium' \
+            >> /home/massgen/.profile; \
+    else \
+        agent-browser install && \
+        cd /home/massgen && \
+        openskills install vercel-labs/agent-browser --universal -y; \
+    fi
 
 # Install uv (modern Python package installer for optional serena skill)
 # Enables uvx for running tools like serena on-demand without permanent installation
