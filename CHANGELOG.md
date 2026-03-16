@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.64 (March 16, 2026)** - Gemini CLI Backend
+Gemini CLI as a first-class backend with session persistence, MCP tools, and Docker support. WebSocket streaming for OpenAI Response API. Execution trace analyzer subagent. Copilot Docker mode. Response API duplicate fix.
+
 **v0.1.63 (March 13, 2026)** - Ensemble & Contracts
 Subagent ensemble pattern with `disable_injection` and `defer_voting_until_all_answered` as defaults. Round evaluator transformation pressure and success contracts. Lighter refinement for subagents. Killed agent handling.
 
@@ -25,6 +28,22 @@ Rewritten read_media with clearer schema and MediaCallLedgerHook for media call 
 Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and media generation fixes.
 
 ---
+
+## [0.1.64] - 2026-03-16
+
+### Added
+- **Gemini CLI Backend** ([#999](https://github.com/massgen/MassGen/pull/999), [#952](https://github.com/massgen/MassGen/issues/952)): New subprocess-based backend for Google's Gemini CLI with session persistence, MCP tools via `.gemini/settings.json`, and Docker support
+- **WebSocket Mode** ([#990](https://github.com/massgen/MassGen/pull/990)): Persistent WebSocket transport for OpenAI Response API with auto-reconnection and real-time event streaming
+- **Execution Trace Analyzer** ([#1002](https://github.com/massgen/MassGen/pull/1002)): New subagent type for mechanistic analysis of agent execution traces with 7-dimension evaluation framework
+- **Copilot Docker Mode** ([#999](https://github.com/massgen/MassGen/pull/999)): Containerized tool execution for Copilot backend with sudo and network configuration
+
+### Fixed
+- **Response API Duplicates** ([#1000](https://github.com/massgen/MassGen/pull/1000)): Prevent duplicate item errors in recursive tool loops
+
+### Technical Details
+- **Major Focus**: Gemini CLI Backend — first new CLI backend since Codex
+- **PRs Merged**: [#999](https://github.com/massgen/MassGen/pull/999), [#990](https://github.com/massgen/MassGen/pull/990), [#1002](https://github.com/massgen/MassGen/pull/1002), [#1000](https://github.com/massgen/MassGen/pull/1000)
+- **Contributors**: @ncrispino, @HenryQi, @db-ol and the MassGen team
 
 ## [0.1.63] - 2026-03-13
 

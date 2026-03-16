@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.63
+**Current Version:** v0.1.64
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** March 13, 2026
+**Last Updated:** March 16, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,11 +42,23 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.64** | 03/16/26 | Gemini CLI Backend | @ncrispino | Gemini CLI backend support ([#952](https://github.com/massgen/MassGen/issues/952)) |
 | **v0.1.65** | 03/18/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
 | **v0.1.66** | 03/20/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
 
 *All releases ship on MWF @ 9am PT when ready*
+
+---
+
+## ✅ v0.1.64 - Gemini CLI Backend (Completed)
+
+**Released:** March 16, 2026 | PRs: [#999](https://github.com/massgen/MassGen/pull/999), [#990](https://github.com/massgen/MassGen/pull/990), [#1002](https://github.com/massgen/MassGen/pull/1002), [#1000](https://github.com/massgen/MassGen/pull/1000)
+
+### Features
+- **Gemini CLI Backend**: New subprocess-based backend for Google's Gemini CLI with session persistence, MCP tools, and Docker support
+- **WebSocket Mode**: Persistent WebSocket transport for OpenAI Response API with auto-reconnection
+- **Execution Trace Analyzer**: New subagent type for mechanistic analysis of agent execution traces
+- **Copilot Docker Mode**: Containerized tool execution for Copilot backend
+- **Response API Fix**: Prevent duplicate item errors in recursive tool loops
 
 ---
 
@@ -61,20 +73,6 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - **Lighter Refinement**: Subagents use lighter refinement prompts to reduce token overhead and latency
 - **Killed Agent Handling**: Graceful management of agents that time out or fail mid-round
 - **Verification Replay**: Evaluation consistency across rounds via replayed verification context
-
----
-
-## 📋 v0.1.64 - Gemini CLI Backend
-
-### Features
-
-**1. Gemini CLI Backend** (@ncrispino)
-- Issue: [#952](https://github.com/massgen/MassGen/issues/952)
-- Add Gemini CLI as a first-class backend
-- **Use Case**: Enable Gemini CLI as a native backend option alongside Claude Code and Codex
-
-### Success Criteria
-- ✅ Gemini CLI backend functional and tested
 
 ---
 
