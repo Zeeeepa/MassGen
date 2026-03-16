@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.63
+**Current Version:** v0.1.64
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** March 13, 2026
+**Last Updated:** March 16, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,55 +42,40 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.64** | 03/16/26 | Gemini CLI Backend | @ncrispino | Gemini CLI backend support ([#952](https://github.com/massgen/MassGen/issues/952)) |
-| **v0.1.65** | 03/18/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
+| **v0.1.65** | 03/18/26 | Cloud Modal MVP | @ncrispino | Run MassGen as a cloud job on Modal ([#982](https://github.com/massgen/MassGen/issues/982)) |
 | **v0.1.66** | 03/20/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
+| **v0.1.67** | 03/23/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## ✅ v0.1.63 - Ensemble & Contracts (Completed)
+## ✅ v0.1.64 - Gemini CLI Backend (Completed)
 
-**Released:** March 13, 2026 | PR: [#996](https://github.com/massgen/MassGen/pull/996)
+**Released:** March 16, 2026 | PRs: [#999](https://github.com/massgen/MassGen/pull/999), [#990](https://github.com/massgen/MassGen/pull/990), [#1002](https://github.com/massgen/MassGen/pull/1002), [#1000](https://github.com/massgen/MassGen/pull/1000)
 
 ### Features
-- **Ensemble Pattern Defaults**: `disable_injection` and `defer_voting_until_all_answered` now default to true for ensemble-style subagent orchestration
-- **Transformation Pressure**: Round evaluator applies transformation pressure to push agents toward meaningful structural changes
-- **Success Contracts**: Explicit quality gates that agents must satisfy before the round evaluator allows convergence
-- **Lighter Refinement**: Subagents use lighter refinement prompts to reduce token overhead and latency
-- **Killed Agent Handling**: Graceful management of agents that time out or fail mid-round
-- **Verification Replay**: Evaluation consistency across rounds via replayed verification context
+- **Gemini CLI Backend**: New subprocess-based backend for Google's Gemini CLI with session persistence, MCP tools, and Docker support
+- **WebSocket Mode**: Persistent WebSocket transport for OpenAI Response API with auto-reconnection
+- **Execution Trace Analyzer**: New subagent type for mechanistic analysis of agent execution traces
+- **Copilot Docker Mode**: Containerized tool execution for Copilot backend
+- **Response API Fix**: Prevent duplicate item errors in recursive tool loops
 
 ---
 
-## 📋 v0.1.64 - Gemini CLI Backend
+## 📋 v0.1.65 - Cloud Modal MVP
 
 ### Features
 
-**1. Gemini CLI Backend** (@ncrispino)
-- Issue: [#952](https://github.com/massgen/MassGen/issues/952)
-- Add Gemini CLI as a first-class backend
-- **Use Case**: Enable Gemini CLI as a native backend option alongside Claude Code and Codex
+**1. Cloud Modal MVP** (@ncrispino)
+- Issue: [#982](https://github.com/massgen/MassGen/issues/982)
+- Run MassGen jobs in the cloud via `--cloud` option on Modal
+- Progress streams to terminal, results saved locally under `.massgen/cloud_jobs/`
+- **Use Case**: Run multi-agent tasks in the cloud without local GPU/resource constraints
 
 ### Success Criteria
-- ✅ Gemini CLI backend functional and tested
-
----
-
-## 📋 v0.1.65 - Image/Video Edit Capabilities
-
-### Features
-
-**1. Check Image/Video Edit Capabilities** (@ncrispino)
-- Issue: [#959](https://github.com/massgen/MassGen/issues/959)
-- Investigate and support image and video editing capabilities across providers
-- Multi-turn editing workflows with continuation IDs
-- **Use Case**: Enable iterative media editing within multi-agent workflows
-
-### Success Criteria
-- ✅ Image editing capabilities documented and tested
-- ✅ Video editing capabilities documented and tested
+- ✅ Cloud job execution functional on Modal
+- ✅ Progress streaming and artifact extraction working
 
 ---
 
@@ -107,6 +92,22 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 ### Success Criteria
 - ✅ OpenAI audio API working via `read_media`
 - ✅ Audio understanding integrated into multi-agent workflows
+
+---
+
+## 📋 v0.1.67 - Image/Video Edit Capabilities
+
+### Features
+
+**1. Check Image/Video Edit Capabilities** (@ncrispino)
+- Issue: [#959](https://github.com/massgen/MassGen/issues/959)
+- Investigate and support image and video editing capabilities across providers
+- Multi-turn editing workflows with continuation IDs
+- **Use Case**: Enable iterative media editing within multi-agent workflows
+
+### Success Criteria
+- ✅ Image editing capabilities documented and tested
+- ✅ Video editing capabilities documented and tested
 
 ---
 

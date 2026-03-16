@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.63 Features](#-latest-features-v0163)
+- [v0.1.64 Features](#-latest-features-v0164)
 </details>
 
 <details open>
@@ -121,15 +121,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.63)](#recent-achievements-v0163)
-- [Previous Achievements (v0.0.3 - v0.1.62)](#previous-achievements-v003---v0162)
+- [Recent Achievements (v0.1.64)](#recent-achievements-v0164)
+- [Previous Achievements (v0.0.3 - v0.1.63)](#previous-achievements-v003---v0163)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.64 Roadmap](#v0164-roadmap)
+- [v0.1.65 Roadmap](#v0165-roadmap)
 </details>
 
 <details open>
@@ -154,20 +154,20 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.63)
+## 🆕 Latest Features (v0.1.64)
 
-**🎉 Released: March 13, 2026**
+**🎉 Released: March 16, 2026**
 
-**What's New in v0.1.63:**
-- **🎯 Ensemble Pattern** - `disable_injection` and `defer_voting_until_all_answered` now default to true for ensemble-style subagent orchestration.
-- **🔄 Round Evaluator Improvements** - Transformation pressure and success contracts for deeper quality assessment.
-- **⚡ Lighter Refinement** - Reduced token overhead for subagent workflows with killed agent handling.
+**What's New in v0.1.64:**
+- **🔌 Gemini CLI Backend** - Google's Gemini CLI as a first-class backend with session persistence, MCP tools, and Docker support.
+- **⚡ WebSocket Streaming** - Persistent WebSocket transport for OpenAI Response API with auto-reconnection.
+- **🔍 Execution Trace Analyzer** - New subagent type for mechanistic analysis of agent execution traces.
 
-**Try v0.1.63 Features:**
+**Try v0.1.64 Features:**
 ```bash
-pip install massgen==0.1.63
-# Try the round evaluator with ensemble defaults
-uv run massgen --config @examples/features/round_evaluator_example.yaml "Create a polished landing page for an AI product"
+pip install massgen==0.1.64
+# Try the Gemini CLI backend
+uv run massgen --config @examples/providers/gemini/gemini_cli_local "Explain quantum computing"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1239,25 +1239,25 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.63)
+### Recent Achievements (v0.1.64)
 
-**🎉 Released: March 13, 2026**
+**🎉 Released: March 16, 2026**
 
-#### Ensemble Pattern
-- **Ensemble Defaults** ([#996](https://github.com/massgen/MassGen/pull/996)): `disable_injection` and `defer_voting_until_all_answered` now default to true for ensemble-style subagent orchestration
-- **Automatic Ensemble**: Defaults apply when spawning subagent orchestrators without explicit override
+#### Gemini CLI Backend
+- **Gemini CLI** ([#999](https://github.com/massgen/MassGen/pull/999), [#952](https://github.com/massgen/MassGen/issues/952)): New subprocess-based backend for Google's Gemini CLI with session persistence, MCP tools, and Docker support
+- **Native Hook Adapter**: Standardized tool execution for Gemini CLI via hook-based IPC
 
-#### Round Evaluator Improvements
-- **Transformation Pressure** ([#996](https://github.com/massgen/MassGen/pull/996)): Evaluator pushes agents toward meaningful structural changes rather than surface-level edits
-- **Success Contracts** ([#996](https://github.com/massgen/MassGen/pull/996)): Explicit quality gates agents must satisfy before convergence
-- **Verification Replay**: Evaluation consistency across rounds via replayed verification context
+#### WebSocket & Trace Analyzer
+- **WebSocket Mode** ([#990](https://github.com/massgen/MassGen/pull/990)): Persistent WebSocket transport for OpenAI Response API with auto-reconnection
+- **Execution Trace Analyzer** ([#1002](https://github.com/massgen/MassGen/pull/1002)): New subagent type for mechanistic analysis of agent execution traces with 7-dimension evaluation
 
-#### Lighter Refinement & Fixes
-- **Lighter Refinement** ([#996](https://github.com/massgen/MassGen/pull/996)): Subagents use lighter refinement prompts to reduce token overhead and latency
-- **Killed Agent Handling**: Graceful management of agents that time out or fail mid-round
-- **Timeout Fallback**: More robust coordination when agents hit timeout boundaries
+#### Copilot Docker & Fixes
+- **Copilot Docker Mode** ([#999](https://github.com/massgen/MassGen/pull/999)): Containerized tool execution for Copilot backend
+- **Response API Fix** ([#1000](https://github.com/massgen/MassGen/pull/1000)): Prevent duplicate item errors in recursive tool loops
 
-### Previous Achievements (v0.0.3 - v0.1.62)
+### Previous Achievements (v0.0.3 - v0.1.63)
+
+✅ **Ensemble & Contracts (v0.1.63)**: Subagent ensemble pattern with `disable_injection` and `defer_voting_until_all_answered` as defaults. Round evaluator transformation pressure and success contracts. Lighter refinement for subagents. Killed agent handling.
 
 ✅ **MassGen Skill & Viewer (v0.1.62)**: General-purpose multi-agent skill with 4 modes (general, evaluate, plan, spec) for Claude Code and other AI agents. Session viewer for real-time observation. Backend improvements for Claude Code, Codex, and Copilot. Headless and web quickstart modes.
 
@@ -1528,12 +1528,12 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.64 Roadmap
+### v0.1.65 Roadmap
 
-Version 0.1.64 focuses on adding a Gemini CLI backend:
+Version 0.1.65 focuses on cloud execution:
 
 #### Planned Features
-- **Gemini CLI Backend** ([#952](https://github.com/massgen/MassGen/issues/952)): Gemini CLI as a first-class backend option
+- **Cloud Modal MVP** ([#982](https://github.com/massgen/MassGen/issues/982)): Run MassGen as a cloud job on Modal
 
 ---
 
