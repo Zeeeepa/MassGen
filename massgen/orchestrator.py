@@ -10989,7 +10989,10 @@ Your answer:"""
             if not type_name:
                 continue
             lowered = type_name.lower()
-            if lowered == "round_evaluator" or lowered in seen:
+            # Exclude analytical subagent types — they observe and report,
+            # they don't execute fix/evolution tasks.
+            analytical_types = {"round_evaluator", "execution_trace_analyzer"}
+            if lowered in analytical_types or lowered in seen:
                 continue
             seen.add(lowered)
             targets.append(type_name)
@@ -11035,6 +11038,40 @@ Your answer:"""
             _add(getattr(filesystem_manager, "cwd", None))
 
         _add(self._agent_temporary_workspace)
+        return context_paths
+
+    def _get_trace_analyzer_context_paths(
+        self,
+        parent_agent_id: str,
+    ) -> list[str]:
+        """Collect focused context paths for the execution_trace_analyzer.
+
+        Unlike the round_evaluator which needs the full workspace, the trace
+        analyzer only needs access to the agent's snapshot directory (which
+        contains ``execution_trace.md``).  Giving it the full workspace root
+        leaks ``subagents/`` contents (round_eval data, etc.).
+        """
+        context_paths: list[str] = []
+        seen: set[str] = set()
+
+        def _add(path_value: Any) -> None:
+            normalized = str(path_value or "").strip()
+            if not normalized or normalized in seen:
+                return
+            resolved = str(Path(normalized).resolve()) if normalized else normalized
+            if resolved in seen:
+                return
+            if not Path(resolved).exists():
+                return
+            seen.add(resolved)
+            context_paths.append(resolved)
+
+        # Primary: agent-specific snapshot directory with execution_trace.md.
+        if self._snapshot_storage:
+            agent_snapshot = Path(self._snapshot_storage) / parent_agent_id
+            if agent_snapshot.exists():
+                _add(str(agent_snapshot))
+
         return context_paths
 
     def _emit_round_evaluator_spawn_event(
@@ -11711,13 +11748,9 @@ Your answer:"""
         if trace_analyzer_enabled:
             trace_task_payload = {
                 "subagent_id": f"trace_analyzer_r{upcoming_round}",
-                "task": (
-                    f"Analyze the execution trace for round {upcoming_round}. "
-                    "Identify process inefficiencies, wasted tool calls, and "
-                    "patterns the agent should avoid or adopt in subsequent rounds."
-                ),
+                "task": ("Analyze the main agent's execution trace. " "Identify process inefficiencies, wasted tool calls, and " "patterns the agent should avoid or adopt in subsequent rounds."),
                 "subagent_type": "execution_trace_analyzer",
-                "context_paths": spawn_context_paths,
+                "context_paths": self._get_trace_analyzer_context_paths(parent_agent_id),
                 "timeout_seconds": configured_timeout,
             }
         # Build TUI spawn args — include both tasks when trace analyzer is enabled.

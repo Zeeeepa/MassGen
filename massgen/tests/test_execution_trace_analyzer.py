@@ -4,6 +4,9 @@ Covers:
 - CLI wiring of ``enable_execution_trace_analyzer`` from YAML coordination config
 - TUI spawn event payload includes both tasks when trace analyzer is enabled
 - Memory formatting with YAML frontmatter
+- Context path isolation (trace analyzer gets focused paths, not full workspace)
+- Delegation targets exclude analytical subagent types
+- next_tasks.json validation robustness
 """
 
 from __future__ import annotations
@@ -295,3 +298,291 @@ async def test_round_evaluator_direct_spawn_also_used_with_filesystem_manager(
 
     assert direct_called, "Direct spawn should be used even with filesystem_manager"
     assert not mcp_called, "MCP path should never be used for orchestrator-managed round evaluator"
+
+
+# ---------------------------------------------------------------------------
+# Part A: Trace analyzer context isolation
+# ---------------------------------------------------------------------------
+
+
+def test_get_trace_analyzer_context_paths_excludes_subagent_dirs(
+    mock_orchestrator,
+    tmp_path,
+):
+    """_get_trace_analyzer_context_paths returns snapshot_storage/<agent_id>,
+    NOT the full workspace root (which contains subagents/)."""
+    from massgen.agent_config import AgentConfig, CoordinationConfig
+
+    coord = CoordinationConfig(orchestrator_managed_round_evaluator=True)
+    config = AgentConfig(coordination_config=coord)
+    orchestrator = mock_orchestrator(num_agents=1, config=config)
+    agent_id = next(iter(orchestrator.agents))
+
+    # Set up snapshot_storage with an agent-specific subdirectory.
+    snapshot_dir = tmp_path / "snapshots" / agent_id
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "execution_trace.md").write_text("trace data")
+    orchestrator._snapshot_storage = str(tmp_path / "snapshots")
+
+    paths = orchestrator._get_trace_analyzer_context_paths(agent_id)
+
+    # Should include the agent-specific snapshot dir.
+    resolved_snapshot = str(snapshot_dir.resolve())
+    assert resolved_snapshot in paths, f"Expected {resolved_snapshot} in paths, got {paths}"
+    # Should NOT include any workspace root that could contain subagents/.
+    for p in paths:
+        assert "subagent" not in p.lower(), f"Path {p} should not reference subagent directories"
+
+
+def test_get_trace_analyzer_context_paths_empty_when_no_snapshot(
+    mock_orchestrator,
+):
+    """When there's no snapshot storage, return an empty list gracefully."""
+    from massgen.agent_config import AgentConfig, CoordinationConfig
+
+    coord = CoordinationConfig(orchestrator_managed_round_evaluator=True)
+    config = AgentConfig(coordination_config=coord)
+    orchestrator = mock_orchestrator(num_agents=1, config=config)
+    agent_id = next(iter(orchestrator.agents))
+
+    orchestrator._snapshot_storage = None
+
+    paths = orchestrator._get_trace_analyzer_context_paths(agent_id)
+    assert paths == []
+
+
+@pytest.mark.asyncio
+async def test_trace_analyzer_gets_dedicated_context_paths(
+    mock_orchestrator,
+    tmp_path,
+):
+    """The trace_task_payload should use _get_trace_analyzer_context_paths,
+    which returns different paths than the round_evaluator's context_paths."""
+    from massgen.agent_config import AgentConfig, CoordinationConfig
+
+    coord = CoordinationConfig(
+        orchestrator_managed_round_evaluator=True,
+        enable_execution_trace_analyzer=True,
+    )
+    config = AgentConfig(coordination_config=coord)
+    orchestrator = mock_orchestrator(num_agents=1, config=config)
+    agent_id = next(iter(orchestrator.agents))
+
+    # Set up snapshot dir so context paths are non-empty.
+    snapshot_dir = tmp_path / "snapshots" / agent_id
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "execution_trace.md").write_text("trace data")
+    orchestrator._snapshot_storage = str(tmp_path / "snapshots")
+
+    orchestrator.agent_states[agent_id].answer = "some answer"
+    orchestrator._round_evaluator_completed_labels[agent_id] = None
+
+    # Capture the tasks passed to direct spawn.
+    captured_tasks: list[list[dict]] = []
+
+    async def _capture_spawn(*args, **kwargs):
+        tasks = kwargs.get("tasks") or (args[0] if args else [])
+        captured_tasks.append(tasks)
+        return {
+            "success": True,
+            "results": [
+                {
+                    "subagent_id": "round_eval_r2",
+                    "status": "completed",
+                    "answer": "ok",
+                    "workspace_path": "/tmp/fake",
+                },
+                {
+                    "subagent_id": "trace_analyzer_r2",
+                    "status": "completed",
+                    "answer": "trace",
+                    "workspace_path": "/tmp/fake2",
+                },
+            ],
+        }
+
+    orchestrator._is_round_evaluator_gate_enabled = lambda: True
+    orchestrator._get_round_evaluator_latest_labels = lambda _ans: ("label",)
+    orchestrator._get_round_evaluator_upcoming_round = lambda _aid: 2
+    orchestrator._get_round_evaluator_display_round = lambda _aid: 2
+    orchestrator._set_round_evaluator_task_mode = lambda *a, **kw: None
+    orchestrator._copy_all_snapshots_to_temp_workspace = AsyncMock(return_value=None)
+    orchestrator._build_round_evaluator_task = lambda _aid, _ans: "eval task"
+    orchestrator._emit_round_evaluator_spawn_event = lambda **kw: None
+    orchestrator._direct_spawn_subagents = _capture_spawn
+    orchestrator._handle_round_evaluator_gate_failure = lambda **kw: False
+    orchestrator._queue_round_start_context_block = lambda *a: None
+
+    with patch("massgen.orchestrator.get_event_emitter", return_value=None):
+        try:
+            await orchestrator._run_round_evaluator_pre_round_if_needed(
+                answers={agent_id: "some answer"},
+            )
+        except Exception:
+            pass
+
+    assert captured_tasks, "Expected _direct_spawn_subagents to be called"
+    tasks = captured_tasks[0]
+    eval_task = next(t for t in tasks if t["subagent_type"] == "round_evaluator")
+    trace_task = next(t for t in tasks if t["subagent_type"] == "execution_trace_analyzer")
+    # The trace analyzer should have different context_paths than the evaluator.
+    assert trace_task["context_paths"] != eval_task["context_paths"], "Trace analyzer should use dedicated context paths, not reuse round_evaluator's"
+
+
+@pytest.mark.asyncio
+async def test_trace_analyzer_task_brief_has_no_round_number(
+    mock_orchestrator,
+    tmp_path,
+):
+    """The trace analyzer task brief should not contain a round number."""
+    from massgen.agent_config import AgentConfig, CoordinationConfig
+
+    coord = CoordinationConfig(
+        orchestrator_managed_round_evaluator=True,
+        enable_execution_trace_analyzer=True,
+    )
+    config = AgentConfig(coordination_config=coord)
+    orchestrator = mock_orchestrator(num_agents=1, config=config)
+    agent_id = next(iter(orchestrator.agents))
+
+    # We need to test the task payload construction, which happens inside
+    # _run_round_evaluator_pre_round_if_needed. We'll capture via _direct_spawn_subagents.
+    captured_tasks: list[list[dict]] = []
+
+    async def _capture_spawn(*args, **kwargs):
+        tasks = kwargs.get("tasks") or (args[0] if args else [])
+        captured_tasks.append(tasks)
+        return {
+            "success": True,
+            "results": [
+                {
+                    "subagent_id": "round_eval_r2",
+                    "status": "completed",
+                    "answer": "ok",
+                    "workspace_path": "/tmp/fake",
+                },
+                {
+                    "subagent_id": "trace_analyzer_r2",
+                    "status": "completed",
+                    "answer": "trace",
+                    "workspace_path": "/tmp/fake2",
+                },
+            ],
+        }
+
+    orchestrator.agent_states[agent_id].answer = "some answer"
+    orchestrator._round_evaluator_completed_labels[agent_id] = None
+    orchestrator._is_round_evaluator_gate_enabled = lambda: True
+    orchestrator._get_round_evaluator_latest_labels = lambda _ans: ("label",)
+    orchestrator._get_round_evaluator_upcoming_round = lambda _aid: 5
+    orchestrator._get_round_evaluator_display_round = lambda _aid: 5
+    orchestrator._set_round_evaluator_task_mode = lambda *a, **kw: None
+    orchestrator._copy_all_snapshots_to_temp_workspace = AsyncMock(return_value=None)
+    orchestrator._build_round_evaluator_task = lambda _aid, _ans: "eval task"
+    orchestrator._get_round_evaluator_context_paths = lambda _aid, **kw: []
+    orchestrator._emit_round_evaluator_spawn_event = lambda **kw: None
+    orchestrator._direct_spawn_subagents = _capture_spawn
+    orchestrator._handle_round_evaluator_gate_failure = lambda **kw: False
+    orchestrator._queue_round_start_context_block = lambda *a: None
+
+    with patch("massgen.orchestrator.get_event_emitter", return_value=None):
+        try:
+            await orchestrator._run_round_evaluator_pre_round_if_needed(
+                answers={agent_id: "some answer"},
+            )
+        except Exception:
+            pass
+
+    assert captured_tasks
+    tasks = captured_tasks[0]
+    trace_task = next(t for t in tasks if t["subagent_type"] == "execution_trace_analyzer")
+    # The task brief should not contain any round number.
+    assert "round 5" not in trace_task["task"].lower(), f"Task brief should not contain round number: {trace_task['task']}"
+
+
+# ---------------------------------------------------------------------------
+# Part B: SUBAGENT.md criteria
+# ---------------------------------------------------------------------------
+
+
+def test_subagent_md_contains_e7_dimension():
+    """SUBAGENT.md must define E7: Verification Completeness."""
+    from pathlib import Path
+
+    md_path = Path(__file__).resolve().parent.parent / "subagent_types" / "execution_trace_analyzer" / "SUBAGENT.md"
+    content = md_path.read_text()
+    assert "### E7" in content, "SUBAGENT.md must define dimension E7"
+    assert "verification" in content.lower()
+
+
+def test_subagent_md_json_schema_includes_e7():
+    """The process_verdict.json example in SUBAGENT.md must include E7."""
+    from pathlib import Path
+
+    md_path = Path(__file__).resolve().parent.parent / "subagent_types" / "execution_trace_analyzer" / "SUBAGENT.md"
+    content = md_path.read_text()
+    # Find the JSON block with scores and verify E7 is present.
+    assert '"E7"' in content, "process_verdict.json example must include E7 score"
+
+
+# ---------------------------------------------------------------------------
+# Part C: Delegation targets exclude analytical subagent types
+# ---------------------------------------------------------------------------
+
+
+def test_delegate_targets_exclude_trace_analyzer(mock_orchestrator):
+    """_get_parent_round_evaluator_delegate_targets must exclude
+    execution_trace_analyzer (it's analytical, not a worker)."""
+    from massgen.agent_config import AgentConfig, CoordinationConfig
+
+    coord = CoordinationConfig(
+        enable_subagents=True,
+        subagent_types=["round_evaluator", "execution_trace_analyzer", "builder"],
+    )
+    config = AgentConfig(coordination_config=coord)
+    orchestrator = mock_orchestrator(num_agents=1, config=config)
+
+    targets = orchestrator._get_parent_round_evaluator_delegate_targets()
+    target_names_lower = [t.lower() for t in targets]
+
+    assert "round_evaluator" not in target_names_lower, "round_evaluator should be excluded from delegate targets"
+    assert "execution_trace_analyzer" not in target_names_lower, "execution_trace_analyzer should be excluded from delegate targets"
+    assert "builder" in target_names_lower, "Worker-type subagents (builder) should be included"
+
+
+# ---------------------------------------------------------------------------
+# Part D: next_tasks.json validation robustness
+# ---------------------------------------------------------------------------
+
+
+def test_next_tasks_validation_accepts_missing_override_reason():
+    """ceiling_approaching + incremental_refinement without
+    incremental_override_reason should still be accepted (with warning)."""
+    from massgen.subagent.models import RoundEvaluatorResult
+
+    payload = {
+        "success_contract": {
+            "outcome_statement": "Improve the design",
+            "quality_bar": "High quality",
+            "fail_if_any": ["Missing key elements"],
+            "required_evidence": ["Visual check"],
+        },
+        "strategy_mode": "incremental_refinement",
+        "approach_assessment": {
+            "ceiling_status": "ceiling_approaching",
+        },
+        # NOTE: no incremental_override_reason
+        "tasks": [
+            {
+                "description": "Refine the layout",
+                "verification": "Check alignment",
+                "success_criteria": "Aligned properly",
+                "failure_signals": ["Misalignment"],
+                "required_evidence": ["Screenshot"],
+            },
+        ],
+    }
+    result = RoundEvaluatorResult.normalize_next_tasks_payload(payload)
+    assert result is not None, "Payload with ceiling_approaching + incremental_refinement but no " "override_reason should be accepted (soft validation)"
+    # Should have a default override reason filled in.
+    assert result.get("incremental_override_reason"), "A default incremental_override_reason should be populated"

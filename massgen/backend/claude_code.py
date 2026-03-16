@@ -2789,13 +2789,8 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             options["thinking"] = {"type": "adaptive"}
 
         # Default effort if not set by reasoning config
-        # Anthropic recommends: opus → high, sonnet/haiku → medium
         if "effort" not in options:
-            model = (options.get("model") or "").lower()
-            if "opus" in model:
-                options["effort"] = "high"
-            else:
-                options["effort"] = "medium"
+            options["effort"] = "medium"
 
         # Debug: Log the full mcp_servers config being passed to SDK
         if "mcp_servers" in options and "filesystem" in options["mcp_servers"]:

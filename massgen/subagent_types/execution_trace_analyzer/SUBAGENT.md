@@ -1,7 +1,7 @@
 ---
 name: execution_trace_analyzer
 description: "When to use: mechanistic analysis of execution traces to identify errors, wasted effort, tool misuse, time allocation issues, and process improvement opportunities. Extracts durable learnings for the agent to carry forward."
-expected_input: ["execution trace markdown file (tool calls, results, errors, reasoning blocks)", "token usage statistics per round (input/output tokens, timing, context usage %)", "tool execution metrics (timing, success/failure, call counts)", "original task description for context", "round number being analyzed"]
+expected_input: ["execution trace markdown file (tool calls, results, errors, reasoning blocks)", "token usage statistics (input/output tokens, timing, context usage %)", "tool execution metrics (timing, success/failure, call counts)", "original task description for context"]
 ---
 # Execution Trace Analyzer
 
@@ -33,9 +33,10 @@ Did the agent's chosen approach work or did it spin? If it spun, why? What alter
 Example: "The agent kept trying to fix the CSS layout with flexbox adjustments — the issue is the container is a grid, switch to grid-area properties."
 
 ### E4: Tool Strategy
-Did the agent use the right tools effectively, or waste time with wrong tools? Identify specific tool substitutions to remember.
+Did the agent use the right tools effectively, or waste time with wrong tools? Identify specific tool substitutions to remember. Also flag **missing critical tool calls** — tools that SHOULD have been used but weren't. This is not just "used wrong tool" but "tool that was available and appropriate was never called."
 
 Example: "The agent read 12 files sequentially looking for a function definition — use Grep to find the function instead of reading every file."
+Example: "The agent generated an image but never called read_media to verify its content — the output could be completely wrong without visual confirmation."
 
 ### E5: Reasoning Patterns
 Did the agent circle in its reasoning? Get stuck restating the same conclusion? What should it think about differently?
@@ -44,6 +45,15 @@ Look for: repeated identical attempts, failure to change strategy after errors, 
 
 ### E6: Context Health
 Token burn rate, how close to limits, whether the agent is wasting context on low-value reads. Flag if the agent is reading large files it never references or accumulating context that could be summarized.
+
+### E7: Verification Completeness
+Did the agent verify its outputs through the appropriate channel? Structural checks alone are insufficient for content that requires perceptual verification (visual, auditory, etc.).
+
+- For visual content (images, charts, PDFs): Did the agent call `read_media` or equivalent to verify the rendered output?
+- For code: Did the agent execute/test the code rather than just reviewing it structurally?
+- For data transforms: Did the agent spot-check output values?
+
+Score low when verification tools are available but the agent never used them. "Did the agent VERIFY its output?" is a process question (your domain), not "Is the output GOOD?" (that's quality, the round_evaluator's domain).
 
 ## Output Contract
 
@@ -54,7 +64,7 @@ You MUST produce exactly two files in your workspace root:
 Structure:
 
 ```
-# Execution Trace Analysis — Round N
+# Execution Trace Analysis
 
 ## Execution Overview
 Brief stats: tool calls, errors, time, tokens. Keep this to 3-5 lines.
@@ -94,7 +104,8 @@ These are execution strategy recommendations, NOT deliverable quality recommenda
     "E3": 8,
     "E4": 6,
     "E5": 9,
-    "E6": 7
+    "E6": 7,
+    "E7": 6
   },
   "key_learnings": [
     "Specific, actionable learning 1",
@@ -111,7 +122,7 @@ These are execution strategy recommendations, NOT deliverable quality recommenda
 
 ## Important Constraints
 
-- Do NOT make deliverable quality judgments — that is the round_evaluator's domain.
+- Do NOT make deliverable quality judgments — that is the round_evaluator's domain. However, flagging that the agent **never verified** its output is a process observation, not a quality judgment. "Did the agent verify?" = process (your job). "Is the output good?" = quality (not your job).
 - Do NOT recommend changes to what the agent is building — only how it builds.
 - Keep learnings **specific to this execution trace**. Generic advice is worthless.
 - Prioritize learnings by impact: what change in behavior would save the most time or avoid the most errors?

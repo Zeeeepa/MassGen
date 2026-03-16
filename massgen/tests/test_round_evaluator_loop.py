@@ -353,14 +353,18 @@ def test_normalize_next_tasks_payload_requires_task_success_semantics():
     assert RoundEvaluatorResult.normalize_next_tasks_payload(payload) is None
 
 
-def test_normalize_next_tasks_payload_rejects_elevated_ceiling_without_escalation():
+def test_normalize_next_tasks_payload_accepts_elevated_ceiling_without_escalation_with_default():
+    """ceiling_approaching + incremental_refinement without override_reason
+    should be accepted with a default reason (soft validation)."""
     from massgen.subagent.models import RoundEvaluatorResult
 
     payload = _make_valid_next_tasks_payload()
     payload["approach_assessment"]["ceiling_status"] = "ceiling_approaching"
     payload["strategy_mode"] = "incremental_refinement"
 
-    assert RoundEvaluatorResult.normalize_next_tasks_payload(payload) is None
+    result = RoundEvaluatorResult.normalize_next_tasks_payload(payload)
+    assert result is not None, "Soft validation should accept the payload"
+    assert result.get("incremental_override_reason"), "A default incremental_override_reason should be populated"
 
 
 def test_normalize_next_tasks_payload_requires_thesis_shift_task_when_strategy_demands_it():
