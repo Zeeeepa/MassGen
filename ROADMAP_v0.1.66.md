@@ -1,10 +1,10 @@
-# MassGen v0.1.65 Roadmap
+# MassGen v0.1.66 Roadmap
 
-**Target Release:** March 18, 2026
+**Target Release:** March 20, 2026
 
 ## Overview
 
-Version 0.1.65 focuses on running MassGen as a cloud job on Modal.
+Version 0.1.66 focuses on running MassGen as a cloud job on Modal.
 
 ---
 
@@ -27,5 +27,5 @@ Version 0.1.65 focuses on running MassGen as a cloud job on Modal.
 
 ## Related Tracks
 
-- **v0.1.64**: Gemini CLI Backend — Gemini CLI, WebSocket streaming, execution trace analyzer, Copilot Docker ([#999](https://github.com/massgen/MassGen/pull/999), [#990](https://github.com/massgen/MassGen/pull/990), [#1002](https://github.com/massgen/MassGen/pull/1002))
-- **v0.1.66**: OpenAI Audio API ([#960](https://github.com/massgen/MassGen/issues/960))
+- **v0.1.65**: MassGen Refinery Plugin — standalone MCP servers for Claude Code ([#1007](https://github.com/massgen/MassGen/pull/1007))
+- **v0.1.67**: OpenAI Audio API ([#960](https://github.com/massgen/MassGen/issues/960))
