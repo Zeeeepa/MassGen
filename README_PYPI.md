@@ -159,7 +159,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: March 18, 2026**
 
 **What's New in v0.1.65:**
-- **🔧 MassGen Refinery Plugin** - Standalone MCP servers (quality, workflow, media) bring MassGen's checklist-based evaluation to Claude Code.
+- **🔧 MassGen Refinery Plugin** - Standalone MCP servers (quality, workflow, media) bring MassGen's checklist-based evaluation to Claude Code. Single-agent refinement working; multi-agent experimental.
 - **✅ Quality Server** - Session-based checklist evaluation with scoring thresholds and improvement proposals.
 - **📋 Workflow Server** - Multi-round answer submission with automatic deliverable snapshots.
 
@@ -167,6 +167,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 ```bash
 pip install massgen==0.1.65
 # The standalone MCP servers are available for the massgen-refinery Claude Code plugin
+# https://github.com/massgen/massgen-refinery
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)

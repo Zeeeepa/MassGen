@@ -202,7 +202,7 @@ Recent Releases
 
 **v0.1.65 (March 18, 2026)** - MassGen Refinery Plugin
 
-Standalone MCP servers (quality, workflow, media) bring MassGen's checklist-based evaluation and multi-round refinement to Claude Code through the massgen-refinery plugin.
+Standalone MCP servers (quality, workflow, media) bring MassGen's checklist-based evaluation and multi-round refinement to Claude Code through the massgen-refinery plugin. Single-agent refinement working; multi-agent experimental.
 
 **v0.1.64 (March 16, 2026)** - Gemini CLI Backend
 
