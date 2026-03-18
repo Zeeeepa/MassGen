@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.65 — MassGen Refinery Plugin! 🚀 Three standalone MCP servers (quality, workflow, media) bring MassGen's checklist-based evaluation and multi-round refinement directly to Claude Code through the massgen-refinery plugin. Single-agent refinement is fully working; multi-agent coordination is experimental. First version of the Claude Code plugin: https://github.com/massgen/massgen-refinery
+We're excited to release MassGen v0.1.65 — MassGen Refinery Plugin! 🚀 Checklist-based evaluation and multi-round refinement now available in Claude Code via standalone MCP servers. Single-agent is fully working; multi-agent experimental. Plugin: https://github.com/massgen/massgen-refinery
 
 ## Install
 
@@ -29,7 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.65 — MassGen Refinery Plugin! 🚀 Three standalone MCP servers (quality, workflow, media) bring MassGen's checklist-based evaluation and multi-round refinement directly to Claude Code through the massgen-refinery plugin. Single-agent refinement is fully working; multi-agent coordination is experimental. First version of the Claude Code plugin: https://github.com/massgen/massgen-refinery
+We're excited to release MassGen v0.1.65 — MassGen Refinery Plugin! 🚀 Checklist-based evaluation and multi-round refinement now available in Claude Code via standalone MCP servers. Single-agent is fully working; multi-agent experimental. Plugin: https://github.com/massgen/massgen-refinery
 
 **Key Improvement:**
 
