@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from ._broadcast_channel import BroadcastChannel
-from .agent_config import AgentConfig
+from .agent_config import AgentConfig, StepModeConfig
 from .backend.base import StreamChunk
 from .chat_agent import ChatAgent
 from .configs.rate_limits import get_rate_limit_config
@@ -208,6 +208,7 @@ class Orchestrator(ChatAgent):
         generated_personas: dict[str, Any] | None = None,
         generated_evaluation_criteria: list | None = None,
         plan_session_id: str | None = None,
+        step_mode: StepModeConfig | None = None,
     ):
         """
         Initialize MassGen orchestrator.
@@ -236,6 +237,7 @@ class Orchestrator(ChatAgent):
             generated_evaluation_criteria: Pre-generated evaluation criteria from previous turn
                                           Format: [GeneratedCriterion, ...]
             plan_session_id: Optional plan session ID for plan execution mode (prevents workspace contamination)
+            step_mode: Optional StepModeConfig for step mode execution (one agent, one step, exit)
         """
         super().__init__(
             session_id,
@@ -292,6 +294,11 @@ class Orchestrator(ChatAgent):
         # Client-provided tools (OpenAI-style). These are passed through to backends
         # so models can request them, but are never executed by MassGen.
         self._external_tools: list[dict[str, Any]] = []
+
+        # Step mode configuration (loading deferred until after coordination_tracker init)
+        self._step_mode: StepModeConfig | None = step_mode
+        self._step_complete: bool = False
+        self._step_action_data: dict[str, Any] | None = None
 
         # MassGen-specific state
         self.current_task: str | None = None
@@ -443,7 +450,34 @@ class Orchestrator(ChatAgent):
 
         # Coordination tracking - always enabled for analysis/debugging
         self.coordination_tracker = CoordinationTracker()
-        self.coordination_tracker.initialize_session(list(agents.keys()))
+        # In step mode, include virtual agent IDs in coordination tracker
+        # so anonymization covers both real and virtual agents
+        if self._step_mode and self._step_mode.enabled:
+            from .step_mode import load_session_dir_inputs
+
+            _step_inputs = load_session_dir_inputs(self._step_mode.session_dir)
+            all_agent_ids = sorted(set(list(agents.keys()) + list(_step_inputs.virtual_agents.keys())))
+            self.coordination_tracker.initialize_session(all_agent_ids)
+            # Pre-load virtual agent answers into coordination tracker
+            for va_id, va_state in _step_inputs.virtual_agents.items():
+                if va_id not in agents and va_state.latest_answer is not None:
+                    self.coordination_tracker.add_agent_answer(va_id, va_state.latest_answer)
+                    logger.info(
+                        "[StepMode] Pre-loaded virtual agent %s (step %d, answer: %d chars)",
+                        va_id,
+                        va_state.latest_step,
+                        len(va_state.latest_answer),
+                    )
+            self._step_inputs = _step_inputs
+            # Pre-mark virtual agent answers as "seen" by real agents
+            # so fairness/restart logic doesn't block on static virtual answers
+            for real_agent_id in agents.keys():
+                for va_id, va_state in _step_inputs.virtual_agents.items():
+                    if va_id not in agents and va_state.latest_answer is not None:
+                        self.agent_states[real_agent_id].known_answer_ids.add(va_id)
+        else:
+            self.coordination_tracker.initialize_session(list(agents.keys()))
+            self._step_inputs = None
 
         # Create snapshot storage and workspace directories if specified
         if snapshot_storage:
@@ -5422,6 +5456,11 @@ Your answer:"""
         ):
             yield chunk
 
+        # Step mode: skip winner selection and final presentation
+        if self._step_complete:
+            logger.info("[StepMode] Skipping winner selection and final presentation")
+            return
+
         # Determine final agent
         current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
         if getattr(self.config, "coordination_mode", "voting") == "decomposition":
@@ -5553,6 +5592,11 @@ Your answer:"""
 
         # Stream agent outputs in real-time until coordination is complete
         while not _coordination_complete():
+            # Step mode: exit after one action (answer or vote)
+            if self._step_complete:
+                logger.info("[StepMode] Step complete — exiting coordination loop")
+                break
+
             # Check for cancellation - stop coordination immediately
             if hasattr(self, "cancellation_manager") and self.cancellation_manager and self.cancellation_manager.is_cancelled:
                 logger.info(
@@ -5564,7 +5608,7 @@ Your answer:"""
             if self.is_orchestrator_timeout:
                 break
             # Start any agents that aren't running and haven't voted yet
-            current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+            current_answers = self._get_current_answers_snapshot()
             gate_ready = await self._run_round_evaluator_pre_round_if_needed(
                 current_answers,
                 conversation_context,
@@ -5862,6 +5906,16 @@ Your answer:"""
                             restart_triggered_id = agent_id  # Last agent to provide new answer
                             reset_signal = True
 
+                            # Step mode: record answer and signal completion
+                            if self._step_mode and self._step_mode.enabled:
+                                self._step_complete = True
+                                self._step_action_data = {
+                                    "action": "new_answer",
+                                    "agent_id": agent_id,
+                                    "answer_text": result_data,
+                                }
+                                logger.info("[StepMode] Agent %s submitted answer — step complete", agent_id)
+
                         elif result_type == "vote":
                             # Agent voted for existing answer
                             logger.debug(
@@ -5954,6 +6008,16 @@ Your answer:"""
                                         result_data,
                                         snapshot_timestamp=vote_timestamp,
                                     )
+                                    # Step mode: record vote and signal completion
+                                    if self._step_mode and self._step_mode.enabled:
+                                        self._step_complete = True
+                                        self._step_action_data = {
+                                            "action": "vote",
+                                            "agent_id": agent_id,
+                                            "vote_target": result_data.get("agent_id", ""),
+                                            "vote_reason": result_data.get("reason", ""),
+                                        }
+                                        logger.info("[StepMode] Agent %s voted — step complete", agent_id)
                                 # End round token tracking with "vote" outcome
                                 if agent and hasattr(
                                     agent.backend,
@@ -7649,8 +7713,8 @@ Your answer:"""
                     self.agent_states[agent_id].restart_pending = False
                 return None
 
-            # Get CURRENT answers from agent_states
-            current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+            # Get CURRENT answers (includes virtual agents in step mode)
+            current_answers = self._get_current_answers_snapshot()
             selected_answers, had_unseen_updates = self._select_midstream_answer_updates(
                 agent_id,
                 current_answers,
@@ -9610,8 +9674,8 @@ Your answer:"""
                     self.agent_states[agent_id].restart_pending = False
                 return None
 
-            # Get CURRENT answers from agent_states
-            current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+            # Get CURRENT answers (includes virtual agents in step mode)
+            current_answers = self._get_current_answers_snapshot()
             selected_answers, had_unseen_updates = self._select_midstream_answer_updates(
                 agent_id,
                 current_answers,
@@ -10275,8 +10339,17 @@ Your answer:"""
         return {aid: len(self.coordination_tracker.answers_by_agent.get(aid, [])) for aid in self.agents.keys()}
 
     def _get_current_answers_snapshot(self) -> dict[str, str]:
-        """Return latest submitted answer content for each agent that has one."""
-        return {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+        """Return latest submitted answer content for each agent that has one.
+
+        In step mode, also includes virtual agent answers from the session directory
+        so the real agent can see peer context and vote for virtual agents.
+        """
+        snapshot = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+        if self._step_mode and self._step_mode.enabled and self._step_inputs:
+            for va_id, va_state in self._step_inputs.virtual_agents.items():
+                if va_id not in self.agents and va_state.latest_answer is not None:
+                    snapshot.setdefault(va_id, va_state.latest_answer)
+        return snapshot
 
     def _sync_decomposition_answer_visibility(self, agent_id: str) -> None:
         """Update seen-answer revision snapshot for an agent.
@@ -13962,8 +14035,8 @@ Your answer:"""
                         tool_args = agent.backend.extract_tool_arguments(tool_call)
 
                         if tool_name == "vote":
-                            # Fetch fresh answers from agent_states (injection may have added new ones)
-                            answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+                            # Fetch fresh answers (includes virtual agents in step mode)
+                            answers = self._get_current_answers_snapshot()
 
                             # Log which agents we are choosing from
                             logger.info(

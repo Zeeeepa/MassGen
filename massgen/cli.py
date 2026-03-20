@@ -323,6 +323,18 @@ def _quickstart_filename_from_config_arg(config_path_arg: str | None) -> str | N
     return normalize_quickstart_config_filename(value)
 
 
+def _headless_quickstart_output_path_from_config_arg(config_path_arg: str | None) -> str | None:
+    """Extract an exact output path for headless quickstart from --config."""
+    if not config_path_arg:
+        return None
+
+    value = config_path_arg.strip()
+    if not value:
+        return None
+
+    return str(Path(value).expanduser())
+
+
 def _parse_quickstart_agent_specs(values: list[str] | None) -> list[dict[str, str | None]]:
     """Parse repeated --quickstart-agent values into explicit agent specs."""
     specs: list[dict[str, str | None]] = []
@@ -3327,9 +3339,9 @@ def validate_mode_flag_combinations(args: argparse.Namespace) -> list[str]:
             errors.append(
                 "--quickstart-agent requires --quickstart --headless.",
             )
-        if getattr(args, "config_backend", None) or getattr(args, "config_model", None) or getattr(args, "config_agents", None) is not None:
+        if getattr(args, "config_backend", None) or getattr(args, "config_model", None) or getattr(args, "config_agent_id", None) or getattr(args, "config_agents", None) is not None:
             errors.append(
-                "--quickstart-agent cannot be combined with --config-backend, --config-model, or --config-agents.",
+                "--quickstart-agent cannot be combined with --config-backend, --config-model, --config-agent-id, or --config-agents.",
             )
 
     return errors
@@ -9944,6 +9956,120 @@ async def main(args):
                 cli_args=vars(args),
             )
 
+        # Handle step mode: run one agent for one step, then exit
+        if getattr(args, "step", False):
+            from .agent_config import StepModeConfig
+            from .step_mode import (
+                save_step_mode_output,
+                validate_step_mode_args,
+                validate_step_mode_config,
+            )
+
+            try:
+                validate_step_mode_args(args)
+                validate_step_mode_config(config)
+            except ValueError as e:
+                print(f"❌ Step mode validation error: {e}")
+                sys.exit(1)
+
+            # Step mode implies automation
+            args.automation = True
+            ui_config["display_type"] = "silent"
+            ui_config["logging_enabled"] = True
+            ui_config["automation_mode"] = True
+
+            step_config = StepModeConfig(enabled=True, session_dir=args.session_dir)
+
+            if not args.question:
+                print("❌ --step requires a question/task")
+                sys.exit(1)
+
+            _automation_print(f"SESSION_DIR: {Path(args.session_dir).resolve()}")
+
+            # Create agents (same as normal single-question mode)
+            orchestrator_cfg = config.get("orchestrator", {})
+            agents = create_agents_from_config(
+                config,
+                orchestrator_cfg,
+                memory_session_id=memory_session_id,
+            )
+
+            # Build orchestrator config (mirrors the normal path)
+            orchestrator_config = AgentConfig()
+            timeout_settings = config.get("timeout_settings", {})
+            if timeout_settings:
+                orchestrator_config.timeout_config = TimeoutConfig(**timeout_settings)
+            _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
+            if "coordination" in orchestrator_cfg:
+                orchestrator_config.coordination_config = _parse_coordination_config(
+                    orchestrator_cfg["coordination"],
+                )
+
+            snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+            agent_temporary_workspace = _scope_agent_temporary_workspace(
+                orchestrator_cfg.get("agent_temporary_workspace"),
+            )
+
+            # Create orchestrator with step mode
+            orchestrator = Orchestrator(
+                agents=agents,
+                config=orchestrator_config,
+                session_id=memory_session_id,
+                snapshot_storage=snapshot_storage,
+                agent_temporary_workspace=agent_temporary_workspace,
+                step_mode=step_config,
+            )
+
+            # Build UI and run question
+            ui = _build_coordination_ui(ui_config)
+            orchestrator.coordination_ui = ui
+
+            import time as _time
+
+            _step_start = _time.monotonic()
+
+            async for chunk in orchestrator.chat(
+                [{"role": "user", "content": args.question}],
+            ):
+                pass  # Stream through silently in automation mode
+
+            _step_duration = _time.monotonic() - _step_start
+
+            # Save step output
+            if orchestrator._step_action_data:
+                action_data = orchestrator._step_action_data
+                real_agent_id = list(agents.keys())[0]
+
+                # Get seen_steps for votes
+                seen_steps = None
+                if action_data["action"] == "vote":
+                    from .step_mode import load_session_dir_inputs
+
+                    inputs = load_session_dir_inputs(args.session_dir)
+                    seen_steps = {}
+                    for va_id, va_state in inputs.virtual_agents.items():
+                        if va_state.latest_answer_step is not None:
+                            seen_steps[va_id] = va_state.latest_answer_step
+
+                save_step_mode_output(
+                    session_dir=args.session_dir,
+                    agent_id=real_agent_id,
+                    action=action_data["action"],
+                    answer_text=action_data.get("answer_text"),
+                    vote_target=action_data.get("vote_target"),
+                    vote_reason=action_data.get("vote_reason"),
+                    seen_steps=seen_steps,
+                    duration_seconds=_step_duration,
+                )
+
+                _automation_print(f"ACTION: {action_data['action']}")
+                _automation_print(f"STATUS: {Path(args.session_dir).resolve() / 'last_action.json'}")
+            else:
+                print("❌ Step mode: agent did not produce an answer or vote", file=sys.stderr)
+                sys.exit(2)
+
+            sys.exit(0)
+
         # Handle plan-and-execute mode
         if getattr(args, "plan_and_execute", False):
             if not args.question:
@@ -10605,6 +10731,8 @@ def main_parser() -> argparse.ArgumentParser:
 
     Extracted so tests can parse arguments without running cli_main().
     """
+    from massgen.backend.capabilities import get_all_backend_types
+
     parser = argparse.ArgumentParser(
         description="MassGen - Multi-Agent Coordination CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -10668,7 +10796,12 @@ Environment Variables:
     config_group.add_argument(
         "--config",
         type=str,
-        help="Path to YAML/JSON configuration file or @examples/NAME. With --quickstart, this is used as the output filename under .massgen/",
+        help=(
+            "Path to YAML/JSON configuration file or @examples/NAME. With "
+            "interactive --quickstart, this is used as the output filename under "
+            ".massgen/. With --quickstart --headless, this is used as the exact "
+            "output config path."
+        ),
     )
     config_group.add_argument(
         "--select",
@@ -10678,21 +10811,7 @@ Environment Variables:
     config_group.add_argument(
         "--backend",
         type=str,
-        choices=[
-            "chatcompletion",
-            "claude",
-            "gemini",
-            "gemini_cli",
-            "grok",
-            "openai",
-            "azure_openai",
-            "copilot",
-            "claude_code",
-            "zai",
-            "lmstudio",
-            "vllm",
-            "sglang",
-        ],
+        choices=sorted(get_all_backend_types()),
         help="Backend type for quick setup",
     )
 
@@ -10786,6 +10905,18 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--step",
+        action="store_true",
+        default=False,
+        help="Step mode: run one agent for one step (new_answer or vote), then exit. " "Config must define exactly one agent. Prior answers loaded from --session-dir.",
+    )
+    parser.add_argument(
+        "--session-dir",
+        type=str,
+        default=None,
+        help="Session directory for step mode. Contains agents/{id}/{step}/answer.json inputs " "and receives step outputs. Used with --step.",
     )
     parser.add_argument(
         "--stream-events",
@@ -10924,7 +11055,7 @@ Environment Variables:
         "--config-agents",
         type=int,
         default=None,
-        help="Number of agents for --generate-config (default: 2)",
+        help="Number of agents for --generate-config or --quickstart --headless (default: 1)",
     )
     parser.add_argument(
         "--config-backend",
@@ -10935,6 +11066,11 @@ Environment Variables:
         "--config-model",
         type=str,
         help="Model name for --generate-config (e.g., 'gpt-5', 'claude-sonnet-4', 'gemini-2.5-pro')",
+    )
+    parser.add_argument(
+        "--config-agent-id",
+        type=str,
+        help="Explicit agent id for single-agent --generate-config or --quickstart --headless runs",
     )
     parser.add_argument(
         "--config-docker",
@@ -10950,7 +11086,7 @@ Environment Variables:
         "--quickstart-agent",
         action="append",
         dest="quickstart_agents",
-        help="Explicit headless quickstart agent spec. Repeat for mixed providers, e.g. " "--quickstart-agent backend=claude,model=claude-opus-4-6",
+        help="Explicit headless quickstart agent spec. Repeat for mixed providers, e.g. " "--quickstart-agent id=agent_a,backend=claude,model=claude-opus-4-6",
     )
     parser.add_argument(
         "--setup",
@@ -11091,8 +11227,12 @@ def _load_eval_criteria(file_path: str) -> list[dict]:
     except json.JSONDecodeError as e:
         print(f"{BRIGHT_RED}Error: --eval-criteria file is not valid JSON: {e}{RESET}")
         sys.exit(EXIT_CONFIG_ERROR)
+    # Accept both bare array [...] and wrapped {"criteria": [...]} format
+    # (the latter is what MassGen's quality tools produce)
+    if isinstance(criteria_data, dict) and "criteria" in criteria_data:
+        criteria_data = criteria_data["criteria"]
     if not isinstance(criteria_data, list):
-        print(f"{BRIGHT_RED}Error: --eval-criteria must be a JSON array{RESET}")
+        print(f'{BRIGHT_RED}Error: --eval-criteria must be a JSON array or {{"criteria": [...]}}{RESET}')
         sys.exit(EXIT_CONFIG_ERROR)
     return criteria_data
 
@@ -11248,6 +11388,7 @@ def _cli_main_continued(args):
         logger.debug(f"Command line arguments: {vars(args)}")
 
     quickstart_config_filename = _quickstart_filename_from_config_arg(args.config) if args.quickstart else None
+    headless_quickstart_output_path = _headless_quickstart_output_path_from_config_arg(args.config) if args.quickstart else None
 
     def _run_quickstart_wizard_tui(config_filename: str | None = None):
         """Launch quickstart wizard TUI. Returns result dict or None."""
@@ -11628,11 +11769,12 @@ def _cli_main_continued(args):
             builder = ConfigBuilder()
             success = builder.generate_config_programmatic(
                 output_path=args.generate_config,
-                num_agents=args.config_agents or 2,
+                num_agents=args.config_agents if args.config_agents is not None else 1,
                 backend_type=args.config_backend,
                 model=args.config_model,
                 use_docker=args.config_docker,
                 context_path=args.config_context_path,
+                agent_id=args.config_agent_id,
             )
             if success:
                 print(
@@ -11658,20 +11800,20 @@ def _cli_main_continued(args):
         # Headless quickstart: auto-detect keys, generate config, no user interaction.
         # Also triggers when stdin is not a TTY (e.g., piped from an AI agent).
         if args.headless or not sys.stdin.isatty():
-            from massgen.config_builder import ConfigBuilder
-
             builder = ConfigBuilder()
             quickstart_agent_specs = _parse_quickstart_agent_specs(
                 getattr(args, "quickstart_agents", None),
             )
             headless_result = builder.run_quickstart_headless(
                 output_dir=".massgen",
-                num_agents=args.config_agents or 3,
+                output_path=headless_quickstart_output_path,
+                num_agents=args.config_agents if args.config_agents is not None else 1,
                 backend_override=args.config_backend,
                 model_override=args.config_model,
                 use_docker=args.config_docker if args.config_docker else None,
                 context_path=args.config_context_path,
                 agent_specs=quickstart_agent_specs or None,
+                agent_id=args.config_agent_id,
             )
 
             # Docker pull if available and headless
