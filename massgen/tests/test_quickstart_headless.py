@@ -407,6 +407,68 @@ class TestHeadlessCLI:
         assert args.config_backend == "anthropic"
         assert args.config_agents == 5
 
+    def test_generate_config_cli_dispatches_without_unboundlocalerror(self, monkeypatch, tmp_path, capsys):
+        """--generate-config should use ConfigBuilder without tripping local shadowing."""
+        from massgen import cli as massgen_cli
+
+        output_path = tmp_path / "generated.yaml"
+        args = massgen_cli.main_parser().parse_args(
+            [
+                "--generate-config",
+                str(output_path),
+                "--config-backend",
+                "openai",
+                "--config-model",
+                "gpt-5.4",
+                "--config-docker",
+            ],
+        )
+
+        generate_calls = []
+
+        def fake_generate_config_programmatic(
+            self,
+            output_path,
+            num_agents,
+            backend_type,
+            model,
+            use_docker,
+            context_path,
+        ):
+            generate_calls.append(
+                {
+                    "output_path": output_path,
+                    "num_agents": num_agents,
+                    "backend_type": backend_type,
+                    "model": model,
+                    "use_docker": use_docker,
+                    "context_path": context_path,
+                },
+            )
+            Path(output_path).write_text("agents: []\n")
+            return True
+
+        monkeypatch.setattr(
+            massgen_cli.ConfigBuilder,
+            "generate_config_programmatic",
+            fake_generate_config_programmatic,
+        )
+
+        massgen_cli._cli_main_continued(args)
+
+        output = capsys.readouterr().out
+        assert generate_calls == [
+            {
+                "output_path": str(output_path),
+                "num_agents": 2,
+                "backend_type": "openai",
+                "model": "gpt-5.4",
+                "use_docker": True,
+                "context_path": None,
+            },
+        ]
+        assert f"Configuration saved to: {output_path}" in output
+
 
 class TestHeadlessAutoTrigger:
     """Auto-trigger headless mode when no TTY."""

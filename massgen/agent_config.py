@@ -22,6 +22,22 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class StepModeConfig:
+    """Configuration for step mode execution.
+
+    Step mode runs one agent for one step (new_answer or vote), then exits.
+    Prior answers/workspaces are loaded from a session directory.
+
+    Args:
+        enabled: Whether step mode is active.
+        session_dir: Path to session directory with inputs/outputs.
+    """
+
+    enabled: bool = False
+    session_dir: str = ""
+
+
+@dataclass
 class TimeoutConfig:
     """Configuration for timeout settings in MassGen.
 

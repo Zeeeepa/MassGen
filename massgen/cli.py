@@ -9944,6 +9944,120 @@ async def main(args):
                 cli_args=vars(args),
             )
 
+        # Handle step mode: run one agent for one step, then exit
+        if getattr(args, "step", False):
+            from .agent_config import StepModeConfig
+            from .step_mode import (
+                save_step_mode_output,
+                validate_step_mode_args,
+                validate_step_mode_config,
+            )
+
+            try:
+                validate_step_mode_args(args)
+                validate_step_mode_config(config)
+            except ValueError as e:
+                print(f"❌ Step mode validation error: {e}")
+                sys.exit(1)
+
+            # Step mode implies automation
+            args.automation = True
+            ui_config["display_type"] = "silent"
+            ui_config["logging_enabled"] = True
+            ui_config["automation_mode"] = True
+
+            step_config = StepModeConfig(enabled=True, session_dir=args.session_dir)
+
+            if not args.question:
+                print("❌ --step requires a question/task")
+                sys.exit(1)
+
+            _automation_print(f"SESSION_DIR: {Path(args.session_dir).resolve()}")
+
+            # Create agents (same as normal single-question mode)
+            orchestrator_cfg = config.get("orchestrator", {})
+            agents = create_agents_from_config(
+                config,
+                orchestrator_cfg,
+                memory_session_id=memory_session_id,
+            )
+
+            # Build orchestrator config (mirrors the normal path)
+            orchestrator_config = AgentConfig()
+            timeout_settings = config.get("timeout_settings", {})
+            if timeout_settings:
+                orchestrator_config.timeout_config = TimeoutConfig(**timeout_settings)
+            _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
+            if "coordination" in orchestrator_cfg:
+                orchestrator_config.coordination_config = _parse_coordination_config(
+                    orchestrator_cfg["coordination"],
+                )
+
+            snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+            agent_temporary_workspace = _scope_agent_temporary_workspace(
+                orchestrator_cfg.get("agent_temporary_workspace"),
+            )
+
+            # Create orchestrator with step mode
+            orchestrator = Orchestrator(
+                agents=agents,
+                config=orchestrator_config,
+                session_id=memory_session_id,
+                snapshot_storage=snapshot_storage,
+                agent_temporary_workspace=agent_temporary_workspace,
+                step_mode=step_config,
+            )
+
+            # Build UI and run question
+            ui = _build_coordination_ui(ui_config)
+            orchestrator.coordination_ui = ui
+
+            import time as _time
+
+            _step_start = _time.monotonic()
+
+            async for chunk in orchestrator.chat(
+                [{"role": "user", "content": args.question}],
+            ):
+                pass  # Stream through silently in automation mode
+
+            _step_duration = _time.monotonic() - _step_start
+
+            # Save step output
+            if orchestrator._step_action_data:
+                action_data = orchestrator._step_action_data
+                real_agent_id = list(agents.keys())[0]
+
+                # Get seen_steps for votes
+                seen_steps = None
+                if action_data["action"] == "vote":
+                    from .step_mode import load_session_dir_inputs
+
+                    inputs = load_session_dir_inputs(args.session_dir)
+                    seen_steps = {}
+                    for va_id, va_state in inputs.virtual_agents.items():
+                        if va_state.latest_answer_step is not None:
+                            seen_steps[va_id] = va_state.latest_answer_step
+
+                save_step_mode_output(
+                    session_dir=args.session_dir,
+                    agent_id=real_agent_id,
+                    action=action_data["action"],
+                    answer_text=action_data.get("answer_text"),
+                    vote_target=action_data.get("vote_target"),
+                    vote_reason=action_data.get("vote_reason"),
+                    seen_steps=seen_steps,
+                    duration_seconds=_step_duration,
+                )
+
+                _automation_print(f"ACTION: {action_data['action']}")
+                _automation_print(f"STATUS: {Path(args.session_dir).resolve() / 'last_action.json'}")
+            else:
+                print("❌ Step mode: agent did not produce an answer or vote", file=sys.stderr)
+                sys.exit(2)
+
+            sys.exit(0)
+
         # Handle plan-and-execute mode
         if getattr(args, "plan_and_execute", False):
             if not args.question:
@@ -10786,6 +10900,18 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--step",
+        action="store_true",
+        default=False,
+        help="Step mode: run one agent for one step (new_answer or vote), then exit. " "Config must define exactly one agent. Prior answers loaded from --session-dir.",
+    )
+    parser.add_argument(
+        "--session-dir",
+        type=str,
+        default=None,
+        help="Session directory for step mode. Contains agents/{id}/{step}/answer.json inputs " "and receives step outputs. Used with --step.",
     )
     parser.add_argument(
         "--stream-events",
@@ -11658,8 +11784,6 @@ def _cli_main_continued(args):
         # Headless quickstart: auto-detect keys, generate config, no user interaction.
         # Also triggers when stdin is not a TTY (e.g., piped from an AI agent).
         if args.headless or not sys.stdin.isatty():
-            from massgen.config_builder import ConfigBuilder
-
             builder = ConfigBuilder()
             quickstart_agent_specs = _parse_quickstart_agent_specs(
                 getattr(args, "quickstart_agents", None),
