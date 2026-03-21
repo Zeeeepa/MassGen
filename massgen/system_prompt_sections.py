@@ -1469,11 +1469,11 @@ After all tasks complete:
    A new answer that passes the checklist but is worse overall is a failed round.
 {
         (
-            "   **Regression guard**: Spawn a `regression_guard` subagent to perform blind "
-            "comparison. Give it the evaluation criteria verbatim, label the previous and "
-            "candidate answers anonymously, and include workspace paths to both. Wait for "
-            "the verdict: `pass` → proceed to submit; `fail` → fix the regressions first; "
-            "`mixed` → use your judgment."
+            "   **Regression guard**: Spawn a `regression_guard` subagent for blind "
+            "comparison. Label both answers as Answer A and Answer B — do NOT reveal "
+            "which is the candidate or which is the previous version. Include evaluation "
+            "criteria verbatim, workspace paths, and output type. The guard reports which "
+            "answer is stronger per criterion; you interpret the result knowing which was yours."
         ) if regression_guard_enabled else ""
     }
 3. Confirm you implemented the full scope of identified improvements, not just some.
@@ -3771,13 +3771,24 @@ Your goal is to iteratively refine answers until they meet the quality bar.
             if not self.has_existing_answers:
                 # Round 1 — no prior answers to evaluate against. Skip checklist instructions
                 # entirely; agent should build and submit directly.
-                evaluation_section = (
+                _round1_text = (
                     "## Decision\n\n"
                     "**Round 1 — First Answer:** Build your best initial version and submit it "
                     "via the `new_answer` workflow tool. Verify your work before submitting. "
                     "Checklist-based evaluation begins in round 2 when there are prior answers "
                     "to compare against."
                 )
+                if self.enable_evaluator_personas:
+                    _round1_text += (
+                        "\n\n**Evaluator personas** (optional, available now): Before calling "
+                        "`new_answer`, you may call `set_evaluator_personas` to configure "
+                        "distinct critique lenses for each evaluator subagent in the upcoming "
+                        "round evaluator stage. Each persona is an object with `label` (short "
+                        "name) and `instructions` (the evaluation focus). The number of personas "
+                        "must match the evaluator team size. This shapes how evaluators will "
+                        "critique your first submission."
+                    )
+                evaluation_section = _round1_text
             else:
                 items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
                 analysis = (
@@ -4757,10 +4768,10 @@ class SubagentSection(SystemPromptSection):
             if t.name.lower() == "regression_guard":
                 lines.append(
                     "Use this before accepting a revision to verify it is actually better — "
-                    "not just different. Give it the criteria verbatim, all candidate answers "
-                    "with workspace paths, and which answer is the new candidate. It performs "
-                    "blind comparison and returns a `verdict.json` with pass/fail/mixed verdict "
-                    "and per-criterion evidence. The parent agent decides what to do with the verdict.",
+                    "not just different. Label both answers as Answer A and Answer B — do NOT "
+                    "reveal which is the candidate or which is the previous version. The guard "
+                    "reports which answer is stronger per criterion; you interpret the result "
+                    "knowing which was yours.",
                 )
             if t.name.lower() == "builder":
                 lines.append(
@@ -4843,11 +4854,13 @@ numeric scores, or terminal recommendations.
                 regression_guard_guidance = """
 **FOR `REGRESSION_GUARD` TASKS, EXPLICITLY INCLUDE:**
 - **Evaluation criteria verbatim** — paste the full E1..EN criterion text into the task.
-- **All candidate answers** labeled anonymously (Answer A, Answer B, etc.) with workspace paths \
-to each answer's deliverables.
-- **Which answer is the candidate** (new revision) vs which is the previous version.
+- **Two answers labeled Answer A and Answer B** with workspace paths to each answer's deliverables. \
+Do NOT reveal which is the candidate or which is the previous version — the comparison must be blind.
 - **Output type** — what kind of deliverable to verify (static image, interactive site, code, audio).
-- **Constraint**: ask for a comparison verdict only. Do NOT ask for improvement suggestions or fixes.
+- **Constraint**: ask for a per-criterion comparison only. Do NOT ask for improvement suggestions or fixes.
+- **Interpreting the result**: You know which label is your candidate. If the guard says your \
+candidate wins on most criteria with no substantial losses, proceed. If it loses on any criterion, \
+investigate before submitting.
 """
             else:
                 regression_guard_guidance = ""

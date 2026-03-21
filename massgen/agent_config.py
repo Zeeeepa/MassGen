@@ -59,6 +59,18 @@ class TimeoutConfig:
 
 
 @dataclass
+class PromptImproverConfig:
+    """Configuration for pre-collab prompt improvement.
+
+    When enabled, spawns a multi-agent consensus call before coordination
+    to rewrite the user's task prompt for clarity, specificity, and ambition.
+    """
+
+    enabled: bool = False
+    persist_across_turns: bool = False
+
+
+@dataclass
 class CoordinationConfig:
     """Configuration for coordination behavior in MassGen.
 
@@ -204,6 +216,9 @@ class CoordinationConfig:
     persona_generator: PersonaGeneratorConfig = field(default_factory=PersonaGeneratorConfig)
     evaluation_criteria_generator: EvaluationCriteriaGeneratorConfig = field(
         default_factory=EvaluationCriteriaGeneratorConfig,
+    )
+    prompt_improver: PromptImproverConfig = field(
+        default_factory=PromptImproverConfig,
     )
     pre_collab_voting_threshold: int | None = None
     enable_subagents: bool = False

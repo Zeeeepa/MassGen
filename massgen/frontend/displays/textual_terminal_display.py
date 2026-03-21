@@ -311,6 +311,7 @@ _PRECOLLAB_SUBAGENT_IDS = frozenset(
         "persona_generation",
         "task_decomposition",
         "criteria_generation",
+        "prompt_improvement",
     },
 )
 
@@ -1210,6 +1211,12 @@ class TextualTerminalDisplay(TerminalDisplay):
             answer_preview,
             error,
         )
+
+    def notify_prompt_improved(self, improved_prompt: str) -> None:
+        """Notify the TUI that the task prompt was improved/evolved."""
+        if not self._app:
+            return
+        self._call_app_method("update_improved_prompt", improved_prompt)
 
     def update_hook_execution(
         self,
@@ -7771,6 +7778,11 @@ Type your question and press Enter to ask the agents.
                 # This ensures clean state for each new turn
                 self.coordination_display.reset_turn_state()
 
+        def update_improved_prompt(self, improved_prompt: str) -> None:
+            """Store the improved/evolved prompt for display in the session info modal."""
+            if self._tab_bar:
+                self._tab_bar.update_improved_prompt(improved_prompt)
+
         def set_agent_subtasks(self, subtasks: dict[str, str]) -> None:
             """Pass agent subtask assignments to the tab bar for display.
 
@@ -8158,11 +8170,24 @@ Type your question and press Enter to ask the agents.
             if event.subtask:
                 label = getattr(event, "assignment_kind", "Subtask")
                 content += f"{label}: {event.subtask}\n\n"
-            content += event.question or "(No prompt)"
+
+            improved = getattr(event, "improved_prompt", None)
+            if improved:
+                content += "IMPROVED PROMPT (what agents see):\n"
+                content += improved
+                content += "\n\n---\n\n"
+                content += "ORIGINAL PROMPT:\n"
+                content += event.question or "(No prompt)"
+            else:
+                content += event.question or "(No prompt)"
+
+            title = f"Turn {event.turn} • Prompt"
+            if improved:
+                title += " (improved)"
             # Show the full prompt in a text modal
             self.push_screen(
                 TextContentModal(
-                    title=f"Turn {event.turn} • Prompt",
+                    title=title,
                     content=content,
                 ),
             )

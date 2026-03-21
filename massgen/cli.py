@@ -3475,7 +3475,7 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
     Centralizes the parsing logic used by run_question_with_history,
     run_single_question, and run_textual_interactive_mode.
     """
-    from .agent_config import CoordinationConfig
+    from .agent_config import CoordinationConfig, PromptImproverConfig
     from .evaluation_criteria_generator import EvaluationCriteriaGeneratorConfig
     from .persona_generator import PersonaGeneratorConfig
     from .subagent.models import SubagentOrchestratorConfig
@@ -3502,6 +3502,15 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
             persist_across_turns=ec_cfg.get("persist_across_turns", False),
             min_criteria=ec_cfg.get("min_criteria", 4),
             max_criteria=ec_cfg.get("max_criteria", 10),
+        )
+
+    # Parse prompt_improver config if present
+    prompt_improver_config = PromptImproverConfig()
+    if "prompt_improver" in coord_cfg:
+        pi_cfg = coord_cfg["prompt_improver"]
+        prompt_improver_config = PromptImproverConfig(
+            enabled=pi_cfg.get("enabled", False),
+            persist_across_turns=pi_cfg.get("persist_across_turns", False),
         )
 
     # Parse task_decomposer config if present
@@ -3549,6 +3558,7 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
         persona_generator=persona_generator_config,
         evaluation_criteria_generator=eval_criteria_config,
+        prompt_improver=prompt_improver_config,
         pre_collab_voting_threshold=coord_cfg.get("pre_collab_voting_threshold"),
         enable_subagents=coord_cfg.get("enable_subagents", False),
         subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
@@ -10061,7 +10071,15 @@ async def main(args):
                     seen_steps=seen_steps,
                     duration_seconds=_step_duration,
                     workspace_source=action_data.get("workspace_path"),
+                    stale_workspace_paths=action_data.get("stale_workspace_paths"),
                 )
+
+                # Save post-coordination artifacts (final/, coordination_events.json, etc.)
+                from massgen.logger_config import get_log_session_dir
+
+                log_session_dir = get_log_session_dir()
+                if log_session_dir:
+                    orchestrator.finalize_step_mode(log_session_dir)
 
                 _automation_print(f"ACTION: {action_data['action']}")
                 _automation_print(f"STATUS: {Path(args.session_dir).resolve() / 'agents' / real_agent_id / 'last_action.json'}")

@@ -443,10 +443,8 @@ Generate personas now:"""
     ) -> dict[str, GeneratedPersona] | None:
         """Search for personas.json in the subagent logs.
 
-        Searches multiple locations where personas.json might exist:
-        1. full_logs/final/agent_*/workspace/ - where manager copies completed workspaces
-        2. full_logs/agent_*/<timestamp>/workspace/ - timestamped run directories
-        3. workspace/snapshots/agent_*/ - snapshot locations
+        Delegates file discovery to :func:`massgen.precollab_utils.find_precollab_artifact`,
+        then parses the JSON and validates that all expected agent IDs are present.
 
         Args:
             log_directory: Path to the main run's log directory
@@ -455,85 +453,46 @@ Generate personas now:"""
         Returns:
             Dictionary mapping agent_id to GeneratedPersona, or None if not found/invalid
         """
-        from pathlib import Path
+        from massgen.precollab_utils import find_precollab_artifact
 
-        log_dir = Path(log_directory)
-        persona_generation_dir = log_dir / "subagents" / "persona_generation"
-
-        if not persona_generation_dir.exists():
-            logger.debug(f"Persona generation dir not found at: {persona_generation_dir}")
+        personas_file = find_precollab_artifact(
+            log_directory,
+            "persona_generation",
+            "personas.json",
+        )
+        if personas_file is None:
             return None
 
-        # Define search patterns in order of preference (relative to persona_generation_dir)
-        search_patterns = [
-            # 1. Final completed workspace (most reliable if exists)
-            "full_logs/final/agent_*/workspace/personas.json",
-            # 2. Timestamped run directories (for partial/cancelled runs)
-            "full_logs/agent_*/*/*/personas.json",
-            # 3. Snapshot locations
-            "workspace/snapshots/agent_*/personas.json",
-            # 4. Direct workspace directories
-            "workspace/agent_*/personas.json",
-            # 5. Temp directories from nested agents
-            "workspace/temp/agent_*/agent*/personas.json",
-        ]
+        try:
+            data = json.loads(personas_file.read_text())
 
-        # Collect all personas.json files found, sorted by modification time (most recent first)
-        found_files: list[Path] = []
-        for pattern in search_patterns:
-            found_files.extend(persona_generation_dir.glob(pattern))
+            if "personas" not in data:
+                logger.debug("personas.json missing 'personas' key")
+                return None
 
-        if not found_files:
-            logger.debug(f"No personas.json files found in {persona_generation_dir}")
-            return None
-
-        # Sort by modification time, most recent first (race-safe)
-        def _safe_mtime(p: Path) -> float:
-            try:
-                return p.stat().st_mtime
-            except (FileNotFoundError, OSError):
-                return 0
-
-        found_files = sorted(found_files, key=_safe_mtime, reverse=True)
-
-        # Try each file until we find one with all required agents
-        for personas_file in found_files:
-            if not personas_file.exists():
-                continue
-
-            logger.debug(f"Checking personas.json at: {personas_file}")
-            try:
-                data = json.loads(personas_file.read_text())
-
-                if "personas" not in data:
-                    logger.debug("personas.json missing 'personas' key")
-                    continue
-
-                personas = {}
-                for agent_id in agent_ids:
-                    if agent_id in data["personas"]:
-                        persona_data = data["personas"][agent_id]
-                        personas[agent_id] = GeneratedPersona(
-                            agent_id=agent_id,
-                            persona_text=persona_data.get(
-                                "persona_text",
-                                "Approach this task thoughtfully.",
-                            ),
-                            attributes=persona_data.get("attributes", {}),
-                        )
-
-                # Return if we got all agents
-                if len(personas) == len(agent_ids):
-                    logger.debug(f"Found complete personas at: {personas_file}")
-                    return personas
-                else:
-                    logger.debug(
-                        f"Incomplete personas at {personas_file}: " f"found {len(personas)}/{len(agent_ids)} agents",
+            personas = {}
+            for agent_id in agent_ids:
+                if agent_id in data["personas"]:
+                    persona_data = data["personas"][agent_id]
+                    personas[agent_id] = GeneratedPersona(
+                        agent_id=agent_id,
+                        persona_text=persona_data.get(
+                            "persona_text",
+                            "Approach this task thoughtfully.",
+                        ),
+                        attributes=persona_data.get("attributes", {}),
                     )
 
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                logger.debug(f"Failed to parse {personas_file}: {e}")
-                continue
+            if len(personas) == len(agent_ids):
+                logger.debug(f"Found complete personas at: {personas_file}")
+                return personas
+            else:
+                logger.debug(
+                    f"Incomplete personas at {personas_file}: " f"found {len(personas)}/{len(agent_ids)} agents",
+                )
+
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.debug(f"Failed to parse {personas_file}: {e}")
 
         return None
 

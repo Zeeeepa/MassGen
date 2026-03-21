@@ -1082,49 +1082,26 @@ Generate evaluation criteria now for the task above."""
         max_criteria: int,
     ) -> list[GeneratedCriterion] | None:
         """Search for criteria.json in subagent logs."""
-        log_dir = Path(log_directory)
-        criteria_gen_dir = log_dir / "subagents" / "criteria_generation"
+        from massgen.precollab_utils import find_precollab_artifact
 
-        if not criteria_gen_dir.exists():
+        criteria_file = find_precollab_artifact(
+            log_directory,
+            "criteria_generation",
+            "criteria.json",
+        )
+        if criteria_file is None:
             return None
 
-        search_patterns = [
-            "full_logs/final/agent_*/workspace/criteria.json",
-            "full_logs/agent_*/*/*/criteria.json",
-            "workspace/snapshots/agent_*/criteria.json",
-            "workspace/agent_*/criteria.json",
-            "workspace/temp/agent_*/agent*/criteria.json",
-        ]
-
-        found_files: list[Path] = []
-        for pattern in search_patterns:
-            found_files.extend(criteria_gen_dir.glob(pattern))
-
-        if not found_files:
-            return None
-
-        def _safe_mtime(p: Path) -> float:
-            try:
-                return p.stat().st_mtime
-            except (FileNotFoundError, OSError):
-                return 0
-
-        found_files = sorted(found_files, key=_safe_mtime, reverse=True)
-
-        for criteria_file in found_files:
-            if not criteria_file.exists():
-                continue
-            try:
-                content = criteria_file.read_text()
-                criteria = _parse_criteria_response(
-                    content,
-                    min_criteria,
-                    max_criteria,
-                )
-                if criteria:
-                    return criteria
-            except Exception as e:
-                logger.debug(f"Failed to parse {criteria_file}: {e}")
-                continue
+        try:
+            content = criteria_file.read_text()
+            criteria = _parse_criteria_response(
+                content,
+                min_criteria,
+                max_criteria,
+            )
+            if criteria:
+                return criteria
+        except Exception as e:
+            logger.debug(f"Failed to parse {criteria_file}: {e}")
 
         return None

@@ -800,7 +800,7 @@ def test_regression_guard_subagent_md_exists():
     assert "name: regression_guard" in content
     assert "description:" in content
     assert "expected_input:" in content
-    assert "Pareto-better" in content
+    assert "blind comparator" in content
 
 
 def test_regression_guard_discovered_when_allowed():
@@ -837,8 +837,8 @@ def test_regression_guard_uses_blocking_mode():
     assert "background=False" in content
 
 
-def test_regression_guard_inline_guidance_shown():
-    """regression_guard inline guidance describes blind comparison and verdict."""
+def test_regression_guard_inline_guidance_enforces_blindness():
+    """regression_guard inline guidance must tell agent NOT to reveal which is the candidate."""
     from massgen.subagent.models import SpecializedSubagentConfig
     from massgen.system_prompt_sections import SubagentSection
 
@@ -847,12 +847,12 @@ def test_regression_guard_inline_guidance_shown():
     ]
     section = SubagentSection("/workspace", max_concurrent=3, specialized_subagents=types)
     content = section.build_content().lower()
-    assert "blind comparison" in content
-    assert "verdict" in content
+    assert "do not" in content and "candidate" in content
+    assert "answer a" in content or "answer b" in content
 
 
-def test_regression_guard_specialized_guidance_shown():
-    """Specialized guidance section for regression_guard tasks is included."""
+def test_regression_guard_specialized_guidance_enforces_blindness():
+    """Specialized guidance must tell agent to NOT reveal candidate identity."""
     from massgen.subagent.models import SpecializedSubagentConfig
     from massgen.system_prompt_sections import SubagentSection
 
@@ -863,7 +863,8 @@ def test_regression_guard_specialized_guidance_shown():
     content = section.build_content().lower()
     assert "for `regression_guard` tasks, explicitly include" in content
     assert "evaluation criteria verbatim" in content
-    assert "which answer is the candidate" in content
+    assert "do not reveal" in content
+    assert "comparison must be blind" in content
 
 
 def test_regression_guard_guidance_not_shown_without_type():
@@ -880,16 +881,17 @@ def test_regression_guard_guidance_not_shown_without_type():
 
 
 def test_regression_guard_phase5_guidance_when_enabled():
-    """Phase 5 should mention regression guard delegation when enabled."""
+    """Phase 5 should tell agent to label anonymously and not reveal candidate."""
     from massgen.system_prompt_sections import _build_checklist_gated_decision
 
     prompt = _build_checklist_gated_decision(
         checklist_items=["Criterion 1"],
         regression_guard_enabled=True,
     )
-    assert "regression_guard" in prompt.lower()
-    assert "blind comparison" in prompt.lower()
-    assert "verdict" in prompt.lower()
+    lower = prompt.lower()
+    assert "regression_guard" in lower
+    assert "do not" in lower and "candidate" in lower
+    assert "answer a" in lower and "answer b" in lower
 
 
 def test_regression_guard_phase5_guidance_absent_when_disabled():

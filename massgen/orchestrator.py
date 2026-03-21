@@ -420,6 +420,10 @@ class Orchestrator(ChatAgent):
         self._agent_paraphrases: dict[str, str] = {}
         self._paraphrase_generation_errors: int = 0
 
+        # Prompt evolution (per-round, from round evaluator)
+        self._evolved_prompts: dict[str, str] = {}
+        self._original_task: str | None = None  # Snapshot of task before any evolution
+
         # Persona generation tracking
         # If personas are passed in (from previous turn), use them and mark as already generated
         self._generated_personas: dict[str, Any] = generated_personas or {}  # agent_id -> GeneratedPersona
@@ -439,6 +443,9 @@ class Orchestrator(ChatAgent):
         # If criteria are passed in (from previous turn), use them and mark as already generated
         self._generated_evaluation_criteria: list | None = generated_evaluation_criteria
         self._evaluation_criteria_generated: bool = bool(generated_evaluation_criteria)
+
+        # Prompt improvement guard
+        self._prompt_improved: bool = False
         # Guard to push criteria to TUI display at most once (checklist_gated does it in
         # _init_checklist_tool; non-checklist modes do it on first round).
         self._criteria_pushed_to_display: bool = False
@@ -2189,8 +2196,9 @@ class Orchestrator(ChatAgent):
     async def _prepare_paraphrases_for_agents(self, question: str) -> None:
         """Generate and assign DSPy paraphrases for the current question."""
 
-        # Reset paraphrases before regenerating
+        # Reset paraphrases and evolved prompts before regenerating
         self._agent_paraphrases = {}
+        self._evolved_prompts = {}
         for state in self.agent_states.values():
             state.paraphrase = None
 
@@ -3643,6 +3651,194 @@ class Orchestrator(ChatAgent):
             except Exception:
                 pass
 
+    async def _improve_and_inject_prompt(self) -> None:
+        """Improve the task prompt via a pre-collab subagent consensus run."""
+        if not hasattr(self.config, "coordination_config"):
+            return
+        if not hasattr(self.config.coordination_config, "prompt_improver"):
+            return
+
+        pi_cfg = self.config.coordination_config.prompt_improver
+        if not pi_cfg.enabled:
+            return
+
+        if self._prompt_improved:
+            logger.info("[Orchestrator] Prompt already improved, skipping")
+            return
+
+        logger.info("[Orchestrator] Improving prompt via subagent")
+
+        try:
+            from .prompt_improver import PromptImprover
+
+            improver = PromptImprover()
+
+            parent_configs = []
+            for agent_id, agent in self.agents.items():
+                agent_cfg: dict[str, Any] = {"id": agent_id}
+                if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
+                    backend_cfg = {k: v for k, v in agent.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+                    agent_cfg["backend"] = backend_cfg
+                parent_configs.append(agent_cfg)
+
+            parent_workspace = None
+            for agent in self.agents.values():
+                fm = getattr(
+                    getattr(agent, "backend", None),
+                    "filesystem_manager",
+                    None,
+                )
+                if fm and fm.cwd:
+                    parent_workspace = str(fm.cwd)
+                    break
+
+            if not parent_workspace:
+                import tempfile
+
+                parent_workspace = tempfile.mkdtemp(prefix="massgen_prompt_")
+
+            log_directory = None
+            try:
+                log_dir = get_log_session_dir()
+                if log_dir:
+                    log_directory = str(log_dir)
+            except Exception:
+                pass
+
+            display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+            anchor_agent = next(iter(self.agents.keys()), None)
+            call_id = "prompt_improvement_prompt_improvement"
+
+            def _on_prompt_subagent_started(
+                subagent_id: str,
+                subagent_task: str,
+                timeout_seconds: int,
+                status_callback: Any,
+                log_path: str | None,
+            ) -> None:
+                _emitter = get_event_emitter()
+                if _emitter:
+                    _emitter.emit_raw(
+                        StructuredEventType.PRE_COLLAB_STARTED,
+                        agent_id=anchor_agent,
+                        subagent_id=subagent_id,
+                        task=subagent_task,
+                        timeout_seconds=timeout_seconds,
+                        call_id=call_id,
+                        log_path=log_path,
+                    )
+                if display and anchor_agent and hasattr(display, "notify_runtime_subagent_started"):
+                    try:
+                        display.notify_runtime_subagent_started(
+                            agent_id=anchor_agent,
+                            subagent_id=subagent_id,
+                            task=subagent_task,
+                            timeout_seconds=timeout_seconds,
+                            call_id=call_id,
+                            status_callback=status_callback,
+                            log_path=log_path,
+                        )
+                    except Exception:
+                        pass
+
+            pre_collab_voting_threshold = getattr(
+                self.config.coordination_config,
+                "pre_collab_voting_threshold",
+                None,
+            )
+            if pre_collab_voting_threshold is None:
+                pre_collab_voting_threshold = getattr(
+                    self.config,
+                    "voting_threshold",
+                    None,
+                )
+
+            improved = await improver.improve_prompt_via_subagent(
+                task=self.current_task or "",
+                agent_configs=parent_configs,
+                parent_workspace=parent_workspace,
+                log_directory=log_directory,
+                orchestrator_id=self.orchestrator_id,
+                on_subagent_started=_on_prompt_subagent_started,
+                voting_sensitivity=getattr(
+                    self.config,
+                    "voting_sensitivity",
+                    None,
+                ),
+                voting_threshold=pre_collab_voting_threshold,
+            )
+
+            self._prompt_improved = True
+
+            if improved:
+                self.current_task = improved
+                logger.info(
+                    f"[Orchestrator] Prompt improved ({len(improved)} chars)",
+                )
+                # Notify TUI so the session info modal can show the improved prompt
+                if display and hasattr(display, "notify_prompt_improved"):
+                    try:
+                        display.notify_prompt_improved(improved)
+                    except Exception:
+                        pass
+            else:
+                logger.info(
+                    "[Orchestrator] Prompt improvement returned no result, " "keeping original",
+                )
+
+            # Emit completion event
+            _emitter = get_event_emitter()
+            if _emitter and anchor_agent:
+                _emitter.emit_raw(
+                    StructuredEventType.PRE_COLLAB_COMPLETED,
+                    agent_id=anchor_agent,
+                    subagent_id="prompt_improvement",
+                    call_id=call_id,
+                    status="completed",
+                    answer_preview=(f"Improved prompt ({len(improved)} chars)" if improved else "Using original prompt"),
+                )
+            if display and anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
+                try:
+                    display.notify_runtime_subagent_completed(
+                        agent_id=anchor_agent,
+                        subagent_id="prompt_improvement",
+                        call_id=call_id,
+                        status="completed",
+                        answer_preview=(f"Improved prompt ({len(improved)} chars)" if improved else "Using original prompt"),
+                    )
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.error(f"[Orchestrator] Failed to improve prompt: {e}")
+            logger.warning(
+                "[Orchestrator] Continuing without prompt improvement",
+            )
+            self._prompt_improved = True
+            try:
+                display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+                anchor_agent = next(iter(self.agents.keys()), None)
+                _emitter = get_event_emitter()
+                if _emitter and anchor_agent:
+                    _emitter.emit_raw(
+                        StructuredEventType.PRE_COLLAB_COMPLETED,
+                        agent_id=anchor_agent,
+                        subagent_id="prompt_improvement",
+                        call_id="prompt_improvement_prompt_improvement",
+                        status="failed",
+                        error=str(e),
+                    )
+                if display and anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
+                    display.notify_runtime_subagent_completed(
+                        agent_id=anchor_agent,
+                        subagent_id="prompt_improvement",
+                        call_id="prompt_improvement_prompt_improvement",
+                        status="failed",
+                        error=str(e),
+                    )
+            except Exception:
+                pass
+
     def _save_evaluation_criteria_to_log(self, criteria: list) -> None:
         """Save generated evaluation criteria to a YAML file in the log directory."""
         try:
@@ -3872,6 +4068,7 @@ class Orchestrator(ChatAgent):
 
             # New task - start MassGen coordination with full context
             self.current_task = user_message
+            self._original_task = user_message  # Snapshot for prompt evolution
 
             # Prepare paraphrases if DSPy is enabled
             if self.dspy_paraphraser:
@@ -4267,6 +4464,50 @@ class Orchestrator(ChatAgent):
             )
             # Save detailed metrics files
             self.save_metrics(log_session_dir)
+
+    def finalize_step_mode(self, log_dir: Path) -> None:
+        """Write post-coordination artifacts for step mode runs.
+
+        Replicates the normal-mode finalization sequence so that step mode
+        log directories have the same structure (final/, status.json,
+        coordination_events.json, metrics) that downstream tools expect.
+
+        Args:
+            log_dir: The log session directory.
+        """
+        import shutil
+
+        action_data = self._step_action_data or {}
+        agent_id = action_data.get("agent_id", "")
+        action = action_data.get("action", "")
+        answer_text = action_data.get("answer_text")
+        workspace_path = action_data.get("workspace_path")
+
+        # Write final/ directory for answer actions
+        if action == "new_answer" and answer_text is not None:
+            final_dir = log_dir / "final" / agent_id
+            final_dir.mkdir(parents=True, exist_ok=True)
+            (final_dir / "answer.txt").write_text(answer_text)
+
+            # Copy workspace to final/ if available
+            if workspace_path:
+                ws_src = Path(workspace_path)
+                if ws_src.is_dir():
+                    ws_dest = final_dir / "workspace"
+                    shutil.copytree(ws_src, ws_dest, symlinks=True, dirs_exist_ok=True)
+
+            # Record in coordination tracker
+            self.coordination_tracker.set_final_answer(
+                agent_id,
+                answer_text,
+                snapshot_timestamp="final",
+            )
+
+        # Save coordination logs (status.json, coordination_events.json, metrics)
+        self.coordination_tracker._end_session()
+        self.coordination_tracker.save_coordination_logs(log_dir)
+        self.coordination_tracker.save_status_file(log_dir, orchestrator=self)
+        self.save_metrics(log_dir)
 
     def save_metrics(self, log_dir: Path):
         """Save detailed metrics files for analysis.
@@ -5169,7 +5410,7 @@ Your answer:"""
         if resume_cfg:
             await self._restore_from_previous_log(resume_cfg)
 
-        # Generate personas and/or evaluation criteria if enabled (happens once per session)
+        # Generate pre-collab steps if enabled (happens once per session)
         _persona_enabled = (
             hasattr(self.config, "coordination_config")
             and hasattr(self.config.coordination_config, "persona_generator")
@@ -5182,33 +5423,34 @@ Your answer:"""
             and self.config.coordination_config.evaluation_criteria_generator.enabled
             and not self._evaluation_criteria_generated
         )
+        _prompt_improver_enabled = (
+            hasattr(self.config, "coordination_config")
+            and hasattr(self.config.coordination_config, "prompt_improver")
+            and self.config.coordination_config.prompt_improver.enabled
+            and not self._prompt_improved
+        )
 
-        if _persona_enabled and _criteria_enabled:
+        pre_collab_tasks: list = []
+        pre_collab_labels: list[str] = []
+        if _persona_enabled:
+            pre_collab_tasks.append(self._generate_and_inject_personas())
+            pre_collab_labels.append("personas")
+        if _criteria_enabled:
+            pre_collab_tasks.append(self._generate_and_inject_evaluation_criteria())
+            pre_collab_labels.append("evaluation criteria")
+        if _prompt_improver_enabled:
+            pre_collab_tasks.append(self._improve_and_inject_prompt())
+            pre_collab_labels.append("prompt improvement")
+
+        if pre_collab_tasks:
             yield StreamChunk(
                 type="preparation_status",
-                status="Generating personas and evaluation criteria...",
-                detail="Creating agent identities and task-specific criteria",
+                status=f"Generating {', '.join(pre_collab_labels)}...",
+                detail="Pre-collaboration consensus steps",
             )
-            await asyncio.gather(
-                self._generate_and_inject_personas(),
-                self._generate_and_inject_evaluation_criteria(),
-            )
-        elif _persona_enabled:
-            yield StreamChunk(
-                type="preparation_status",
-                status="Generating personas...",
-                detail="Creating unique agent identities",
-            )
-            await self._generate_and_inject_personas()
-        elif _criteria_enabled:
-            yield StreamChunk(
-                type="preparation_status",
-                status="Generating evaluation criteria...",
-                detail="Creating task-specific evaluation criteria",
-            )
-            await self._generate_and_inject_evaluation_criteria()
+            await asyncio.gather(*pre_collab_tasks)
         else:
-            # Neither enabled, still call persona generation for its guard logic
+            # No pre-collab enabled, still call persona generation for its guard logic
             await self._generate_and_inject_personas()
 
         # Notify TUI of persona assignments for parallel mode.
@@ -6010,15 +6252,14 @@ Your answer:"""
                             # Step mode: record answer and signal completion
                             if self._step_mode and self._step_mode.enabled:
                                 self._step_complete = True
-                                workspace_path = None
-                                agent = self.agents.get(agent_id)
-                                if agent and agent.backend.filesystem_manager and agent.backend.filesystem_manager.cwd:
-                                    workspace_path = str(agent.backend.filesystem_manager.cwd)
+                                workspace_path = self._resolve_step_mode_workspace(agent_id)
+                                stale_paths = self._resolve_step_mode_stale_paths(agent_id)
                                 self._step_action_data = {
                                     "action": "new_answer",
                                     "agent_id": agent_id,
                                     "answer_text": result_data,
                                     "workspace_path": workspace_path,
+                                    "stale_workspace_paths": stale_paths,
                                 }
                                 logger.info("[StepMode] Agent %s submitted answer — step complete", agent_id)
 
@@ -6474,11 +6715,37 @@ Your answer:"""
                 if source_snapshot.exists() and source_snapshot.is_dir():
                     all_snapshots[source_agent_id] = source_snapshot
 
+        # In step mode, also include virtual agent workspaces from the session dir
+        if self._step_mode and self._step_mode.enabled and self._step_inputs:
+            for va_id, va_state in self._step_inputs.virtual_agents.items():
+                if va_id not in all_snapshots and va_state.latest_workspace:
+                    va_ws = Path(va_state.latest_workspace)
+                    if va_ws.exists() and va_ws.is_dir():
+                        all_snapshots[va_id] = va_ws
+
         # Use the filesystem manager to copy snapshots to temp workspace
         workspace_path = await agent.backend.filesystem_manager.copy_snapshots_to_temp_workspace(
             all_snapshots,
             agent_mapping,
         )
+
+        # Replace stale paths in copied workspace files
+        if workspace_path:
+            from massgen.filesystem_manager import replace_stale_paths_in_workspace
+
+            for source_agent_id, snapshot_path in all_snapshots.items():
+                anon_id = agent_mapping.get(source_agent_id, source_agent_id)
+                dest_dir = workspace_path / anon_id
+                if not dest_dir.exists():
+                    continue
+                replacements: dict[str, str] = {str(snapshot_path): str(dest_dir)}
+                source_agent = self.agents.get(source_agent_id)
+                if source_agent and source_agent.backend.filesystem_manager:
+                    fm = source_agent.backend.filesystem_manager
+                    if fm.cwd:
+                        replacements[str(fm.cwd)] = str(dest_dir)
+                replace_stale_paths_in_workspace(dest_dir, replacements)
+
         return str(workspace_path) if workspace_path else None
 
     async def _restore_from_previous_log(self, resume_config: dict[str, Any]) -> None:
@@ -10098,7 +10365,7 @@ Your answer:"""
 
                 anon_agent_id = agent_mapping.get(
                     other_agent_id,
-                    f"agent_{other_agent_id}",
+                    other_agent_id,
                 )
                 replace_path = os.path.join(temp_workspace_base, anon_agent_id) if temp_workspace_base else anon_agent_id
                 other_workspace = str(
@@ -10472,6 +10739,48 @@ Your answer:"""
                 if va_state.latest_answer is not None:
                     snapshot.setdefault(va_id, va_state.latest_answer)
         return snapshot
+
+    def _resolve_step_mode_workspace(self, agent_id: str) -> str | None:
+        """Resolve the workspace path for step mode output.
+
+        After _save_agent_snapshot runs, the agent's cwd is cleared but
+        snapshot_storage has the full copy. Prefer snapshot_storage when it
+        has content; fall back to cwd if snapshot_storage is missing.
+        Returns None when the agent produced no workspace files.
+        """
+        agent = self.agents.get(agent_id)
+        if not agent or not agent.backend.filesystem_manager:
+            return None
+        fm = agent.backend.filesystem_manager
+        if fm.snapshot_storage and fm.snapshot_storage.is_dir() and any(fm.snapshot_storage.iterdir()):
+            return str(fm.snapshot_storage)
+        if fm.cwd and Path(fm.cwd).is_dir() and any(Path(fm.cwd).iterdir()):
+            return str(fm.cwd)
+        return None
+
+    def _resolve_step_mode_stale_paths(self, agent_id: str) -> list[str]:
+        """Collect workspace paths the agent may have referenced in its answer text.
+
+        These paths (cwd, temp workspace) are ephemeral and won't exist when
+        another step mode invocation loads the session directory. They need to
+        be replaced with the session dir workspace path by save_step_mode_output.
+
+        Args:
+            agent_id: The agent whose paths to collect.
+
+        Returns:
+            List of stale path strings (may be empty).
+        """
+        stale: list[str] = []
+        agent = self.agents.get(agent_id)
+        if not agent or not agent.backend.filesystem_manager:
+            return stale
+        fm = agent.backend.filesystem_manager
+        if fm.cwd:
+            stale.append(str(fm.cwd))
+        if fm.agent_temporary_workspace:
+            stale.append(str(fm.agent_temporary_workspace))
+        return stale
 
     def _sync_decomposition_answer_visibility(self, agent_id: str) -> None:
         """Update seen-answer revision snapshot for an agent.
@@ -11271,9 +11580,18 @@ Your answer:"""
                 "- No parent-specialized subagents are available for delegation in the next round.\n"
                 "- Keep execution hints inline unless the task brief explicitly provides a reusable subagent_id.\n\n"
             )
+        # Include previous evolved prompt context so the evaluator can
+        # see what directions were already tried (without using it as the
+        # base to rewrite from — always rewrite from the original task).
+        evolved_prompt_block = ""
+        current_evolved = self._evolved_prompts.get(parent_agent_id)
+        if current_evolved:
+            evolved_prompt_block = "PREVIOUS EVOLVED PROMPT (for context — do NOT rewrite from this; " "always rewrite from the ORIGINAL TASK above):\n" f"{current_evolved}\n\n"
+
         return (
             "Produce one very critical cross-answer critique packet for the parent agent.\n\n"
-            f"ORIGINAL TASK:\n{self.current_task or 'Task coordination'}\n\n"
+            f"ORIGINAL TASK:\n{self._original_task or self.current_task or 'Task coordination'}\n\n"
+            f"{evolved_prompt_block}"
             "EVALUATION CRITERIA:\n"
             f"{criteria_block}\n\n"
             f"{pressure_block}"
@@ -12308,6 +12626,23 @@ Your answer:"""
                 parent_agent_id,
             )
 
+        # Store evolved prompt if evaluator produced one
+        if evaluator_result.evolved_prompt:
+            self._evolved_prompts[parent_agent_id] = evaluator_result.evolved_prompt
+            logger.info(
+                "[Orchestrator] Evolved prompt stored for %s (%d chars, rationale: %s)",
+                parent_agent_id,
+                len(evaluator_result.evolved_prompt),
+                (evaluator_result.evolved_prompt_rationale or "")[:100],
+            )
+            # Notify TUI so the session info modal shows the evolved prompt
+            _display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+            if _display and hasattr(_display, "notify_prompt_improved"):
+                try:
+                    _display.notify_prompt_improved(evaluator_result.evolved_prompt)
+                except Exception:
+                    pass
+
         self._set_round_evaluator_task_mode(
             parent_agent_id,
             enabled=auto_injected,
@@ -13189,6 +13524,9 @@ Your answer:"""
             # Note: Broadcast communication section is now integrated in SystemMessageBuilder
             # as BroadcastCommunicationSection when broadcast is enabled in coordination config
 
+            # Substitute evolved prompt as the task if available (prompt evolution)
+            effective_task = self._evolved_prompts.get(agent_id, task)
+
             # Build conversation with context support (for user message and conversation history)
             # We pass the NEW system_message so it gets tracked in context JSONs
             # Sort agent IDs for consistent anonymous mapping with coordination_tracker
@@ -13204,7 +13542,7 @@ Your answer:"""
             ):
                 # Use conversation context-aware building
                 conversation = self.message_templates.build_conversation_with_context(
-                    current_task=task,
+                    current_task=effective_task,
                     conversation_history=conversation_context.get(
                         "conversation_history",
                         [],
@@ -13221,7 +13559,7 @@ Your answer:"""
             else:
                 # Fallback to standard conversation building
                 conversation = self.message_templates.build_initial_conversation(
-                    task=task,
+                    task=effective_task,
                     agent_summaries=normalized_answers,
                     valid_agent_ids=sorted_answer_ids,
                     base_system_message=system_message,  # Use NEW structured message
@@ -13265,9 +13603,14 @@ Your answer:"""
                     f"[Orchestrator] Injecting round_start_context_block for {agent_id}" f" ({len(round_start_context)} chars," f" first 300: {round_start_context[:300]!r})",
                 )
             runtime_user_instructions = self._build_runtime_user_instructions_context(agent_id)
+            # When an evolved prompt replaced the task, warn that existing
+            # peer answers may not satisfy the new requirements.
+            stale_answer_note = None
+            if agent_id in self._evolved_prompts and normalized_answers:
+                stale_answer_note = "Note: The answers below were produced for an earlier " "version of this task and may not fully satisfy the " "evolved requirements above."
             conversation["user_message"] = self._insert_runtime_context_blocks_after_original_message(
                 conversation["user_message"],
-                [round_start_context, runtime_user_instructions],
+                [stale_answer_note, round_start_context, runtime_user_instructions],
             )
 
             # Track all the context used for this agent execution
