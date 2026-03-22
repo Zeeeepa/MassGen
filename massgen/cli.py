@@ -3581,6 +3581,7 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         round_evaluator_refine=coord_cfg.get("round_evaluator_refine", False),
         round_evaluator_transformation_pressure=coord_cfg.get("round_evaluator_transformation_pressure", "balanced"),
         enable_execution_trace_analyzer=coord_cfg.get("enable_execution_trace_analyzer", False),
+        enable_evaluator_personas=coord_cfg.get("enable_evaluator_personas", False),
         enable_quality_rethink_on_iteration=coord_cfg.get("enable_quality_rethink_on_iteration", False),
         enable_novelty_on_iteration=coord_cfg.get("enable_novelty_on_iteration", False),
         novelty_injection=coord_cfg.get("novelty_injection", "none"),

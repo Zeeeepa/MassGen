@@ -5443,6 +5443,22 @@ Your answer:"""
             pre_collab_labels.append("prompt improvement")
 
         if pre_collab_tasks:
+            # Announce parallel pre-collab batch so TUI can open a unified screen.
+            _parallel_ids = []
+            if _persona_enabled:
+                _parallel_ids.append("persona_generation")
+            if _criteria_enabled:
+                _parallel_ids.append("criteria_generation")
+            if _prompt_improver_enabled:
+                _parallel_ids.append("prompt_improvement")
+
+            _emitter = get_event_emitter()
+            if _emitter:
+                _emitter.emit_raw(
+                    StructuredEventType.PRE_COLLAB_BATCH_ANNOUNCED,
+                    pre_collab_ids=_parallel_ids,
+                )
+
             yield StreamChunk(
                 type="preparation_status",
                 status=f"Generating {', '.join(pre_collab_labels)}...",
@@ -6272,7 +6288,7 @@ Your answer:"""
                             # EXCEPTION 1: Single-agent run can clear stale restart_pending once it has an answer.
                             # EXCEPTION 2: Revision-aware stale detection clears restart_pending when no unseen
                             # latest peer updates remain.
-                            # EXCEPTION 3: Hard timeout acts as fairness cutoff and allows terminal actions.
+                            # EXCEPTION 3: Hard timeout acts as fairness cutoff and clears restart_pending.
                             restart_pending = self._check_restart_pending(agent_id)
                             is_single_agent = len(self.agents) == 1
                             agent_has_answer = self.agent_states[agent_id].answer is not None
@@ -11090,31 +11106,6 @@ Your answer:"""
         elapsed = time.time() - state.round_start_time
         return elapsed >= (soft_timeout + grace_seconds)
 
-    def _check_terminal_fairness_gate(self, agent_id: str) -> tuple[bool, str | None]:
-        """Enforce that terminal actions only happen after latest peer updates are seen."""
-        if not self._is_fairness_enabled():
-            return (True, None)
-
-        # In independent refinement mode, agents do not receive cross-agent updates.
-        if self.config.disable_injection:
-            return (True, None)
-
-        # Hard timeout is the fairness cutoff: allow terminal actions to avoid deadlock.
-        if self._is_hard_timeout_active(agent_id):
-            return (True, None)
-
-        unseen_sources = self._get_unseen_source_agent_ids(agent_id)
-        if not unseen_sources:
-            return (True, None)
-
-        # Anonymize agent IDs before including in model-facing error message
-        reverse_mapping = self.coordination_tracker.get_reverse_agent_mapping()
-        anon_sources = [reverse_mapping.get(src, src) for src in unseen_sources]
-        source_list = ", ".join(anon_sources)
-        terminal_action = self._terminal_action_wording()
-        error_msg = f"Fairness gate: before you {terminal_action}, you must first observe the latest update(s) " f"from: {source_list}. Continue working and wait for context injection."
-        return (False, error_msg)
-
     def _get_agent_answer_count_for_limit(self, agent_id: str) -> int:
         """Get answer count used for per-agent answer limit enforcement."""
         if self._is_decomposition_mode():
@@ -12365,6 +12356,9 @@ Your answer:"""
             "context_paths": spawn_context_paths,
             "timeout_seconds": configured_timeout,
         }
+        # Sync stdio checklist state so personas written by the stdio
+        # set_evaluator_personas tool are available to the orchestrator.
+        self._sync_stdio_checklist_state_from_specs(parent_agent_id)
         # Inject evaluator personas if configured by the main agent.
         consumed_personas = self._consume_evaluator_personas()
         if consumed_personas:
@@ -12630,10 +12624,9 @@ Your answer:"""
         if evaluator_result.evolved_prompt:
             self._evolved_prompts[parent_agent_id] = evaluator_result.evolved_prompt
             logger.info(
-                "[Orchestrator] Evolved prompt stored for %s (%d chars, rationale: %s)",
-                parent_agent_id,
-                len(evaluator_result.evolved_prompt),
-                (evaluator_result.evolved_prompt_rationale or "")[:100],
+                f"[Orchestrator] Evolved prompt stored for {parent_agent_id} "
+                f"({len(evaluator_result.evolved_prompt)} chars, "
+                f"rationale: {(evaluator_result.evolved_prompt_rationale or '')[:100]})",
             )
             # Notify TUI so the session info modal shows the evolved prompt
             _display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
@@ -14607,48 +14600,6 @@ Your answer:"""
                                     yield ("done", None)
                                     return
 
-                            terminal_ok, terminal_error = self._check_terminal_fairness_gate(agent_id)
-                            if not terminal_ok:
-                                # Keep restart_pending so the next tool cycle can inject unseen updates.
-                                self.agent_states[agent_id].restart_pending = True
-
-                                if attempt < max_attempts - 1:
-                                    yield (
-                                        "content",
-                                        f"❌ Retry ({attempt + 1}/{max_attempts}): {terminal_error}",
-                                    )
-
-                                    buffer_preview, buffer_chars = self._get_buffer_content(agent)
-                                    self.coordination_tracker.track_enforcement_event(
-                                        agent_id=agent_id,
-                                        reason="fairness_terminal_wait",
-                                        attempt=attempt + 1,
-                                        max_attempts=max_attempts,
-                                        tool_calls=["vote"],
-                                        error_message=terminal_error,
-                                        buffer_preview=buffer_preview,
-                                        buffer_chars=buffer_chars,
-                                    )
-
-                                    enforcement_msg = self._create_tool_error_messages(
-                                        agent,
-                                        [tool_call],
-                                        terminal_error,
-                                    )
-                                    attempt += 1
-                                    continue
-
-                                logger.info(
-                                    "[Orchestrator] Fairness gate forcing restart for %s after repeated premature vote attempts",
-                                    agent_id,
-                                )
-                                yield (
-                                    "content",
-                                    f"⏳ {terminal_error} Restarting with latest context.",
-                                )
-                                yield ("done", None)
-                                return
-
                             voted_agent_anon = tool_args.get("agent_id")
                             reason = tool_args.get("reason", "")
 
@@ -14750,47 +14701,6 @@ Your answer:"""
 
                         elif tool_name == "stop":
                             workflow_tool_found = True
-                            terminal_ok, terminal_error = self._check_terminal_fairness_gate(agent_id)
-                            if not terminal_ok:
-                                self.agent_states[agent_id].restart_pending = True
-
-                                if attempt < max_attempts - 1:
-                                    yield (
-                                        "content",
-                                        f"❌ Retry ({attempt + 1}/{max_attempts}): {terminal_error}",
-                                    )
-
-                                    buffer_preview, buffer_chars = self._get_buffer_content(agent)
-                                    self.coordination_tracker.track_enforcement_event(
-                                        agent_id=agent_id,
-                                        reason="fairness_terminal_wait",
-                                        attempt=attempt + 1,
-                                        max_attempts=max_attempts,
-                                        tool_calls=["stop"],
-                                        error_message=terminal_error,
-                                        buffer_preview=buffer_preview,
-                                        buffer_chars=buffer_chars,
-                                    )
-
-                                    enforcement_msg = self._create_tool_error_messages(
-                                        agent,
-                                        [tool_call],
-                                        terminal_error,
-                                    )
-                                    attempt += 1
-                                    continue
-
-                                logger.info(
-                                    "[Orchestrator] Fairness gate forcing restart for %s after repeated premature stop attempts",
-                                    agent_id,
-                                )
-                                yield (
-                                    "content",
-                                    f"⏳ {terminal_error} Restarting with latest context.",
-                                )
-                                yield ("done", None)
-                                return
-
                             # Decomposition mode: agent signals subtask is complete
                             summary = tool_args.get("summary", "")
                             status = tool_args.get("status", "complete")

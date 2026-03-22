@@ -114,13 +114,15 @@ class SubagentHeader(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Button("← Back", classes="back-button", id="back_btn")
-        yield Static(f"Subagent: {self._subagent.id}", classes="subagent-title", id="header_title")
+        label = getattr(self._subagent, "subagent_type", None) or self._subagent.id
+        yield Static(f"Subagent: {label}", classes="subagent-title", id="header_title")
 
     def update_subagent(self, subagent: SubagentDisplayData) -> None:
         """Update the header for a new subagent."""
         self._subagent = subagent
         try:
-            self.query_one("#header_title", Static).update(f"Subagent: {subagent.id}")
+            label = getattr(subagent, "subagent_type", None) or subagent.id
+            self.query_one("#header_title", Static).update(f"Subagent: {label}")
         except Exception as e:
             tui_log(f"[SubagentScreen] {e}")
 
@@ -924,6 +926,7 @@ class SubagentView(Container):
         self._inner_agents: list[str] = []
         self._agent_active_set: set[str] = set()
         self._inner_agent_models: dict[str, str] = {}
+        self._inner_agent_system_prompts: dict[str, str] = {}
         self._current_inner_agent: str | None = None
         self._tool_call_agent_map: dict[str, str] = {}
         self._terminal_status_notes: set[str] = set()
@@ -948,14 +951,20 @@ class SubagentView(Container):
         self._continue_subagent_button: Button | None = None
 
     def _build_unique_tab_ids(self) -> list[str]:
-        """Build unique tab IDs from subagent list, disambiguating duplicates."""
+        """Build unique tab IDs from subagent list, disambiguating duplicates.
+
+        Prefers ``subagent_type`` (a human-friendly label) over raw ``id``
+        when available, so pre-collab tabs show e.g. "Personas" instead of
+        "persona_generation".
+        """
         seen: dict[str, int] = {}
         tab_ids: list[str] = []
         self._tab_id_to_index: dict[str, int] = {}
         for idx, sa in enumerate(self._all_subagents):
-            count = seen.get(sa.id, 0)
-            seen[sa.id] = count + 1
-            tab_id = f"{sa.id}_{count}" if count > 0 else sa.id
+            label = getattr(sa, "subagent_type", None) or sa.id
+            count = seen.get(label, 0)
+            seen[label] = count + 1
+            tab_id = f"{label}_{count}" if count > 0 else label
             tab_ids.append(tab_id)
             self._tab_id_to_index[tab_id] = idx
         return tab_ids
@@ -1075,7 +1084,7 @@ class SubagentView(Container):
         self._init_event_reader()
 
         # Detect inner agents and update the inner tab bar
-        self._inner_agents, self._inner_agent_models = self._detect_inner_agents()
+        self._inner_agents, self._inner_agent_models, self._inner_agent_system_prompts = self._detect_inner_agents()
         self._agent_active_set = set(self._inner_agents)
         self._current_inner_agent = self._inner_agents[0] if self._inner_agents else self._subagent.id
 
@@ -1083,6 +1092,16 @@ class SubagentView(Container):
         if self._inner_tab_bar and self._inner_agents:
             self._inner_tab_bar.update_agents(self._inner_agents, self._inner_agent_models)
             self._inner_tab_bar.set_active(self._current_inner_agent)
+
+        # Show evaluator persona labels in inner agent tabs
+        if self._inner_agent_system_prompts and self._inner_tab_bar:
+            persona_labels = {}
+            for aid, prompt in self._inner_agent_system_prompts.items():
+                if "Evaluator Persona:" in prompt:
+                    label = prompt.split("Evaluator Persona:")[1].split("\n")[0].strip()
+                    persona_labels[aid] = label
+            if persona_labels:
+                self._inner_tab_bar.set_agent_personas(persona_labels)
 
         # Register agents on the status line for activity dots
         if self._status_line and self._inner_agents:
@@ -1207,21 +1226,22 @@ class SubagentView(Container):
 
         self._subagent.context_paths = context_paths
 
-    def _detect_inner_agents(self) -> tuple[list[str], dict[str, str]]:
-        """Detect agent IDs and models from the subagent's logs.
+    def _detect_inner_agents(self) -> tuple[list[str], dict[str, str], dict[str, str]]:
+        """Detect agent IDs, models, and system prompts from the subagent's logs.
 
         Tries multiple sources:
         1. execution_metadata.yaml - contains full config with agent names and models
         2. events.jsonl - has agent_id fields on events
 
         Returns:
-            Tuple of (agent_ids list, agent_models dict mapping agent_id to model name).
+            Tuple of (agent_ids list, agent_models dict, agent_system_prompts dict).
             Always returns at least the subagent ID itself if no agents are found.
         """
         import yaml
 
         agent_ids: list[str] = []
         agent_models: dict[str, str] = {}
+        agent_system_prompts: dict[str, str] = {}
 
         from pathlib import Path
 
@@ -1276,6 +1296,9 @@ class SubagentView(Container):
                                     # Shorten model name for display
                                     short_model = model.split("/")[-1]  # Handle "openai/gpt-4o" format
                                     agent_models[agent_id] = short_model
+                                system_prompt = backend_cfg.get("system_prompt", "")
+                                if system_prompt:
+                                    agent_system_prompts[agent_id] = system_prompt
 
         except Exception as e:
             print(f"[SubagentScreen] Error detecting inner agents: {e}")
@@ -1301,12 +1324,12 @@ class SubagentView(Container):
             logger.info(
                 f"[SubagentScreen] No inner agents detected for {self._subagent.id}, using fallback",
             )
-            return [self._subagent.id], {}
+            return [self._subagent.id], {}, {}
 
         logger.info(
             f"[SubagentScreen] Detected {len(agent_ids)} inner agents: {agent_ids}, models: {agent_models}",
         )
-        return agent_ids, agent_models
+        return agent_ids, agent_models, agent_system_prompts
 
     def _init_event_reader(self) -> None:
         """Initialize the event reader for the current subagent."""
@@ -1429,6 +1452,9 @@ class SubagentView(Container):
         if not self._auto_return_on_completion or self._auto_return_prompt_cancelled or self._auto_return_prompt_shown:
             return
         if self._auto_return_prompt_timer is not None:
+            return
+        # When multiple subagents exist, wait for ALL to finish
+        if any(sa.status in ("running", "pending") for sa in self._all_subagents):
             return
         if self._subagent.status in ("running", "pending"):
             return
@@ -1582,12 +1608,32 @@ class SubagentView(Container):
 
     def _poll_updates(self) -> None:
         """Poll for status and event updates."""
-        # Update status if callback available
+        # Update status if callback available — refresh ALL subagents
         if self._status_callback:
-            new_data = self._status_callback(self._subagent.id)
-            if new_data:
-                self._subagent = new_data
-                self._update_status_display()
+            for idx, sa in enumerate(self._all_subagents):
+                new_data = self._status_callback(sa.id)
+                if new_data:
+                    # Preserve subagent_type from original if refresh doesn't have it
+                    if not getattr(new_data, "subagent_type", None) and getattr(sa, "subagent_type", None):
+                        new_data = SubagentDisplayData(
+                            id=new_data.id,
+                            task=new_data.task,
+                            status=new_data.status,
+                            progress_percent=new_data.progress_percent,
+                            elapsed_seconds=new_data.elapsed_seconds,
+                            timeout_seconds=new_data.timeout_seconds,
+                            workspace_path=new_data.workspace_path,
+                            workspace_file_count=new_data.workspace_file_count,
+                            last_log_line=new_data.last_log_line,
+                            error=new_data.error,
+                            answer_preview=new_data.answer_preview,
+                            log_path=new_data.log_path,
+                            subagent_type=sa.subagent_type,
+                        )
+                    self._all_subagents[idx] = new_data
+                    if sa.id == self._subagent.id:
+                        self._subagent = new_data
+            self._update_status_display()
 
         # Attempt to initialize event reader if it wasn't ready at mount time
         if self._event_reader is None:
@@ -1631,8 +1677,9 @@ class SubagentView(Container):
 
         self._maybe_schedule_auto_return_prompt()
 
-        # Stop polling if completed
-        if self._subagent.status not in ("running", "pending"):
+        # Stop polling if ALL subagents are done (not just the primary one)
+        _all_done = all(sa.status not in ("running", "pending") for sa in self._all_subagents)
+        if _all_done and self._subagent.status not in ("running", "pending"):
             # Finalize any incomplete final presentation cards (e.g. timeout
             # killed the subagent before chunks/end events were written)
             for adapter in self._event_adapters.values():
@@ -1745,7 +1792,7 @@ class SubagentView(Container):
             self._init_event_reader()
 
             # Detect inner agents for the new subagent
-            self._inner_agents, self._inner_agent_models = self._detect_inner_agents()
+            self._inner_agents, self._inner_agent_models, self._inner_agent_system_prompts = self._detect_inner_agents()
             self._agent_active_set = set(self._inner_agents)
             self._current_inner_agent = self._inner_agents[0] if self._inner_agents else self._subagent.id
 
@@ -1754,6 +1801,16 @@ class SubagentView(Container):
                 self._inner_tab_bar.update_agents(self._inner_agents, self._inner_agent_models)
                 self._inner_tab_bar.set_active(self._current_inner_agent)
                 self._inner_tab_bar.update_question(self._subagent.task or "")
+
+            # Show evaluator persona labels in inner agent tabs
+            if self._inner_agent_system_prompts and self._inner_tab_bar:
+                persona_labels = {}
+                for aid, prompt in self._inner_agent_system_prompts.items():
+                    if "Evaluator Persona:" in prompt:
+                        label = prompt.split("Evaluator Persona:")[1].split("\n")[0].strip()
+                        persona_labels[aid] = label
+                if persona_labels:
+                    self._inner_tab_bar.set_agent_personas(persona_labels)
 
             # Update activity dots on status line
             if self._status_line and self._inner_agents:
@@ -2528,12 +2585,26 @@ class SubagentView(Container):
             from massgen.frontend.displays.textual import TextContentModal
 
             content = ""
+            # Prepend evaluator persona if present for current inner agent
+            persona = self._inner_agent_system_prompts.get(
+                self._current_inner_agent or "",
+                "",
+            )
+            if persona:
+                content += f"{persona}\n\n---\n\n"
             if event.subtask:
                 content += f"Subtask: {event.subtask}\n\n"
             content += event.question or "(No prompt)"
+
+            # Extract persona label for modal title
+            title = f"Turn {event.turn} • Prompt"
+            if persona and "Evaluator Persona:" in persona:
+                persona_label = persona.split("Evaluator Persona:")[1].split("\n")[0].strip()
+                title = f"Turn {event.turn} • {persona_label} • Prompt"
+
             self.app.push_screen(
                 TextContentModal(
-                    title=f"Turn {event.turn} • Prompt",
+                    title=title,
                     content=content,
                 ),
             )

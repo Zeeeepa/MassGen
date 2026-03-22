@@ -1221,14 +1221,14 @@ delegate execution hints or try to spawn builder/evaluator helpers here.
             if enable_evaluator_personas:
                 _phase1_scope += """
 
-**Evaluator personas** (optional, available from round 1): Before calling \
-`new_answer` on ANY round (including your very first answer), you may call \
-`set_evaluator_personas` to configure distinct critique lenses for each \
-evaluator subagent. Each persona is an object with `label` (short name) and \
-`instructions` (the evaluation focus). The number of personas must match the \
-evaluator team size. Personas are single-use per round; if you do not re-set \
-them, the previous round's personas are reused. This is entirely optional — \
-if you never call the tool, evaluators run with their default behavior.
+**Evaluator personas** (REQUIRED before every `new_answer`): Call \
+`set_evaluator_personas` before calling `new_answer` to configure distinct \
+critique lenses for each evaluator subagent. Each persona is an object with \
+`label` (short name) and `instructions` (the evaluation focus). The number \
+of personas must match the evaluator team size. Personas are single-use per \
+round; if you do not re-set them, the previous round's personas are reused. \
+Design personas that bring genuinely different evaluation perspectives — \
+consider what angles your current work most needs scrutiny from.
 
 """
 
@@ -3780,13 +3780,14 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                 )
                 if self.enable_evaluator_personas:
                     _round1_text += (
-                        "\n\n**Evaluator personas** (optional, available now): Before calling "
-                        "`new_answer`, you may call `set_evaluator_personas` to configure "
-                        "distinct critique lenses for each evaluator subagent in the upcoming "
-                        "round evaluator stage. Each persona is an object with `label` (short "
-                        "name) and `instructions` (the evaluation focus). The number of personas "
-                        "must match the evaluator team size. This shapes how evaluators will "
-                        "critique your first submission."
+                        "\n\n**Evaluator personas** (REQUIRED before every `new_answer`): "
+                        "Call `set_evaluator_personas` before calling `new_answer` to configure "
+                        "distinct critique lenses for each evaluator subagent. Each persona is "
+                        "an object with `label` (short name) and `instructions` (the evaluation "
+                        "focus). The number of personas must match the evaluator team size. "
+                        "Design personas that bring genuinely different evaluation perspectives "
+                        "to your work — e.g., a correctness auditor, a user-experience advocate, "
+                        "and a performance critic. This is how the round evaluator gets diversity."
                     )
                 evaluation_section = _round1_text
             else:
