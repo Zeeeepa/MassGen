@@ -194,6 +194,7 @@ export interface HookExecutionInfo {
   reason?: string;
   execution_time_ms?: number;
   injection_preview?: string;
+  injection_content?: string;
 }
 
 export interface HookExecutionEvent extends WSMessage {

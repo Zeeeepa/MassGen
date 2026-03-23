@@ -1,9 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Panel, Group, Separator } from 'react-resizable-panels';
+import { ExternalLink, Eye, X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { useWorkspaceStore, type WorkspaceFileInfo } from '../../../stores/workspaceStore';
 import { useAgentStore } from '../../../stores/agentStore';
 import { useTileStore } from '../../../stores/v2/tileStore';
 import { getAgentColor } from '../../../utils/agentColors';
+import { canPreviewFile } from '../../../utils/artifactTypes';
+import { InlineArtifactPreview } from '../../InlineArtifactPreview';
 
 export function WorkspaceBrowserTile() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -12,26 +16,69 @@ export function WorkspaceBrowserTile() {
 
   const workspacePaths = Object.keys(workspaces);
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>('');
+  const [selectedFile, setSelectedFile] = useState<WorkspaceFileInfo | null>(null);
+  const lastAutoPreviewKeyRef = useRef<string | null>(null);
 
-  // Keep selectedWorkspace in sync — pick first available if current is invalid
   const effectiveWorkspace =
     workspacePaths.includes(selectedWorkspace) ? selectedWorkspace : workspacePaths[0] || '';
 
   const files = workspaces[effectiveWorkspace]?.files || [];
 
+  // Clear selected file when workspace changes
+  useEffect(() => {
+    setSelectedFile(null);
+  }, [effectiveWorkspace]);
+
+  useEffect(() => {
+    if (selectedFile && !files.some((file) => file.path === selectedFile.path)) {
+      setSelectedFile(null);
+    }
+  }, [files, selectedFile]);
+
+  useEffect(() => {
+    if (selectedFile) return;
+
+    const mainPreviewableFile = findMainPreviewableFile(files);
+    if (!mainPreviewableFile) return;
+
+    const autoPreviewKey = `${effectiveWorkspace}:${mainPreviewableFile.path}`;
+    if (lastAutoPreviewKeyRef.current === autoPreviewKey) return;
+
+    lastAutoPreviewKeyRef.current = autoPreviewKey;
+    setSelectedFile(mainPreviewableFile);
+  }, [effectiveWorkspace, files, selectedFile]);
+
   const handleFileClick = (file: WorkspaceFileInfo) => {
+    setSelectedFile(file);
+  };
+
+  const handleOpenInTile = () => {
+    if (!selectedFile) return;
     addTile({
-      id: `file-${file.path}`,
+      id: `file-${selectedFile.path}`,
       type: 'file-viewer',
-      targetId: file.path,
-      label: file.path.split('/').pop() || file.path,
+      targetId: selectedFile.path,
+      label: selectedFile.path.split('/').pop() || selectedFile.path,
     });
   };
 
+  const wsStatus = useWorkspaceStore((s) => s.wsStatus);
+  const sessionId = useAgentStore((s) => s.sessionId);
+
   if (workspacePaths.length === 0) {
+    const isWaiting = !!sessionId && (wsStatus === 'connecting' || wsStatus === 'connected');
     return (
-      <div className="flex items-center justify-center h-full text-v2-text-muted text-sm">
-        No workspace files available
+      <div className="flex flex-col items-center justify-center h-full text-v2-text-muted text-sm gap-2">
+        {isWaiting ? (
+          <>
+            <svg className="w-5 h-5 animate-spin" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="8" cy="8" r="6" strokeDasharray="20" strokeDashoffset="5" />
+            </svg>
+            <span>Waiting for workspace data...</span>
+          </>
+        ) : (
+          <span>No workspace files available</span>
+        )}
       </div>
     );
   }
@@ -74,9 +121,80 @@ export function WorkspaceBrowserTile() {
         </div>
       )}
 
-      {/* File tree */}
+      {/* Main content: file tree (+ optional preview panel) */}
+      {selectedFile ? (
+        <Group orientation="vertical" className="flex-1 min-h-0">
+          <Panel id="file-tree" defaultSize={45} minSize={20}>
+            <div className="h-full overflow-auto v2-scrollbar">
+              <FileTree
+                files={files}
+                onFileClick={handleFileClick}
+                selectedPath={selectedFile.path}
+              />
+            </div>
+          </Panel>
+          <Separator
+            className={cn(
+              'h-[2px] bg-v2-border transition-colors duration-150',
+              'hover:bg-v2-accent'
+            )}
+          />
+          <Panel id="file-preview" defaultSize={55} minSize={25}>
+            <FilePreview
+              file={selectedFile}
+              workspacePath={effectiveWorkspace}
+              onOpenInTile={handleOpenInTile}
+              onClose={() => setSelectedFile(null)}
+            />
+          </Panel>
+        </Group>
+      ) : (
+        <div className="flex-1 overflow-auto v2-scrollbar">
+          <FileTree files={files} onFileClick={handleFileClick} selectedPath={null} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// File Preview
+// ============================================================================
+
+interface FilePreviewProps {
+  file: WorkspaceFileInfo;
+  workspacePath: string;
+  onOpenInTile: () => void;
+  onClose: () => void;
+}
+
+function FilePreview({ file, workspacePath, onOpenInTile, onClose }: FilePreviewProps) {
+  return (
+    <div className="flex flex-col h-full bg-v2-surface">
+      {/* Preview header */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-v2-border shrink-0">
+        <span className="text-xs text-v2-text-secondary truncate">{file.path}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={onOpenInTile}
+            className="p-1 text-v2-text-muted hover:text-v2-text transition-colors rounded hover:bg-v2-sidebar-hover"
+            title="Open in new tile"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1 text-v2-text-muted hover:text-v2-text transition-colors rounded hover:bg-v2-sidebar-hover"
+            title="Close preview"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Content — rendered via InlineArtifactPreview */}
       <div className="flex-1 overflow-auto v2-scrollbar">
-        <FileTree files={files} onFileClick={handleFileClick} />
+        <InlineArtifactPreview filePath={file.path} workspacePath={workspacePath} />
       </div>
     </div>
   );
@@ -89,9 +207,10 @@ export function WorkspaceBrowserTile() {
 interface FileTreeProps {
   files: WorkspaceFileInfo[];
   onFileClick: (file: WorkspaceFileInfo) => void;
+  selectedPath: string | null;
 }
 
-function FileTree({ files, onFileClick }: FileTreeProps) {
+function FileTree({ files, onFileClick, selectedPath }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
 
   if (files.length === 0) {
@@ -105,7 +224,13 @@ function FileTree({ files, onFileClick }: FileTreeProps) {
   return (
     <div className="py-1">
       {tree.children.map((node) => (
-        <TreeNode key={node.path} node={node} depth={0} onFileClick={onFileClick} />
+        <TreeNode
+          key={node.path}
+          node={node}
+          depth={0}
+          onFileClick={onFileClick}
+          selectedPath={selectedPath}
+        />
       ))}
     </div>
   );
@@ -127,10 +252,12 @@ interface TreeNodeProps {
   node: TreeNodeData;
   depth: number;
   onFileClick: (file: WorkspaceFileInfo) => void;
+  selectedPath: string | null;
 }
 
-function TreeNode({ node, depth, onFileClick }: TreeNodeProps) {
+function TreeNode({ node, depth, onFileClick, selectedPath }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(depth < 1);
+  const isPreviewable = !!node.file && canPreviewFile(node.file.path);
 
   if (node.isDir) {
     return (
@@ -160,11 +287,19 @@ function TreeNode({ node, depth, onFileClick }: TreeNodeProps) {
         </button>
         {expanded &&
           node.children.map((child) => (
-            <TreeNode key={child.path} node={child} depth={depth + 1} onFileClick={onFileClick} />
+            <TreeNode
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              onFileClick={onFileClick}
+              selectedPath={selectedPath}
+            />
           ))}
       </div>
     );
   }
+
+  const isSelected = selectedPath === node.path;
 
   return (
     <button
@@ -172,12 +307,23 @@ function TreeNode({ node, depth, onFileClick }: TreeNodeProps) {
       className={cn(
         'flex items-center gap-1.5 w-full text-sm text-v2-text-secondary',
         'hover:bg-v2-sidebar-hover hover:text-v2-text',
-        'transition-colors duration-100 py-0.5 pr-2'
+        'transition-colors duration-100 py-0.5 pr-2',
+        isSelected && 'bg-[var(--v2-channel-active)] text-v2-text',
+        isPreviewable && !isSelected && 'text-v2-text'
       )}
       style={{ paddingLeft: `${depth * 16 + 8 + 15}px` }}
     >
       <FileIcon name={node.name} />
       <span className="truncate">{node.name}</span>
+      {isPreviewable && (
+        <span
+          aria-label="Rich preview available"
+          title="Rich preview available"
+          className="shrink-0 text-v2-accent"
+        >
+          <Eye className="w-3.5 h-3.5" />
+        </span>
+      )}
       {node.file && (
         <span className="ml-auto text-[10px] text-v2-text-muted shrink-0">
           {formatSize(node.file.size)}
@@ -222,7 +368,6 @@ function buildTree(files: WorkspaceFileInfo[]): TreeNodeData {
     }
   }
 
-  // Sort: directories first, then files, both alphabetically
   const sortChildren = (node: TreeNodeData) => {
     node.children.sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
@@ -239,6 +384,52 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}M`;
+}
+
+function findMainPreviewableFile(files: WorkspaceFileInfo[]): WorkspaceFileInfo | null {
+  const previewableFiles = files.filter((file) => canPreviewFile(file.path));
+  if (previewableFiles.length === 0) return null;
+
+  const pdf = previewableFiles.find((file) =>
+    file.path.toLowerCase().endsWith('.pdf')
+  );
+  if (pdf) return pdf;
+
+  const pptx = previewableFiles.find((file) =>
+    file.path.toLowerCase().endsWith('.pptx')
+  );
+  if (pptx) return pptx;
+
+  const docx = previewableFiles.find((file) =>
+    file.path.toLowerCase().endsWith('.docx')
+  );
+  if (docx) return docx;
+
+  const indexHtml = previewableFiles.find((file) =>
+    file.path.toLowerCase().endsWith('index.html')
+  );
+  if (indexHtml) return indexHtml;
+
+  const anyHtml = previewableFiles.find((file) =>
+    file.path.toLowerCase().endsWith('.html') ||
+    file.path.toLowerCase().endsWith('.htm')
+  );
+  if (anyHtml) return anyHtml;
+
+  const image = previewableFiles.find((file) => {
+    const lower = file.path.toLowerCase();
+    return (
+      lower.endsWith('.png') ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.gif') ||
+      lower.endsWith('.svg') ||
+      lower.endsWith('.webp')
+    );
+  });
+  if (image) return image;
+
+  return previewableFiles[0];
 }
 
 function FileIcon({ name }: { name: string }) {

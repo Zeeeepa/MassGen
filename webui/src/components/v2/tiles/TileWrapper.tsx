@@ -8,14 +8,21 @@ import { FileViewerTile } from './FileViewerTile';
 import { WorkspaceBrowserTile } from './WorkspaceBrowserTile';
 import { TimelineTile } from './TimelineTile';
 import { VoteResultsTile } from './VoteResultsTile';
+import { SubagentTile } from './SubagentTile';
+import { InlineArtifactPreview } from '../../InlineArtifactPreview';
+import { useWorkspaceStore } from '../../../stores/workspaceStore';
+import { TileDragContext } from './TileDragContext';
+import { TileDragHandle } from './TileDragHandle';
 
 interface TileWrapperProps {
   tile: TileState;
   isActive: boolean;
   showClose: boolean;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
-export function TileWrapper({ tile, isActive, showClose }: TileWrapperProps) {
+export function TileWrapper({ tile, isActive, showClose, onDragStart, onDragEnd }: TileWrapperProps) {
   const removeTile = useTileStore((s) => s.removeTile);
   const agentOrder = useAgentStore((s) => s.agentOrder);
 
@@ -30,65 +37,74 @@ export function TileWrapper({ tile, isActive, showClose }: TileWrapperProps) {
   }
 
   return (
-    <div
-      className={cn(
-        'flex flex-col h-full',
-        isActive && showClose && !ringStyle && 'ring-1 ring-v2-accent/30 ring-inset'
-      )}
-      style={ringStyle}
-    >
-      {/* Tile header — only for non-channel tiles (files, artifacts, etc.) */}
-      {!skipTileHeader && (
-        <div className="flex items-center h-10 px-3 bg-v2-surface border-b border-v2-border shrink-0">
-          <TileIcon type={tile.type} />
-          <span className="ml-2 text-sm font-medium text-v2-text truncate">
-            {tile.label}
-          </span>
-          <div className="flex-1" />
-          {showClose && (
-            <button
-              onClick={() => removeTile(tile.id)}
-              className={cn(
-                'flex items-center justify-center w-6 h-6 rounded',
-                'text-v2-text-muted hover:text-v2-text hover:bg-v2-sidebar-hover',
-                'transition-colors duration-150'
-              )}
-              title="Close tile"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M2 2l8 8M10 2l-8 8" strokeLinecap="round" />
-              </svg>
-            </button>
-          )}
-        </div>
-      )}
+    <TileDragContext.Provider value={{ tileId: tile.id, isDraggable: showClose }}>
+      <div
+        className={cn(
+          'flex flex-col h-full',
+          isActive && showClose && !ringStyle && 'ring-1 ring-v2-accent/30 ring-inset'
+        )}
+        style={ringStyle}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
+        {/* Tile header — only for non-channel tiles (files, artifacts, etc.) */}
+        {!skipTileHeader && (
+          <div className="flex items-center h-10 px-3 bg-v2-surface border-b border-v2-border shrink-0">
+            <TileDragHandle />
+            {showClose && <div className="w-1.5" />}
+            <TileIcon type={tile.type} />
+            <span className="ml-2 text-sm font-medium text-v2-text truncate">
+              {tile.label}
+            </span>
+            <div className="flex-1" />
+            {showClose && (
+              <button
+                onClick={() => removeTile(tile.id)}
+                className={cn(
+                  'flex items-center justify-center w-6 h-6 rounded',
+                  'text-v2-text-muted hover:text-v2-text hover:bg-v2-sidebar-hover',
+                  'transition-colors duration-150'
+                )}
+                title="Close tile"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M2 2l8 8M10 2l-8 8" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
 
-      {/* Tile content */}
-      <div className="flex-1 overflow-hidden">
-        <TileContent tile={tile} />
+        {/* Tile content */}
+        <div className="flex-1 overflow-hidden">
+          <TileContent tile={tile} />
+        </div>
       </div>
-    </div>
+    </TileDragContext.Provider>
   );
 }
 
 function TileContent({ tile }: { tile: TileState }) {
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const workspacePath = Object.keys(workspaces)[0] || '';
+
   switch (tile.type) {
     case 'agent-channel':
       return <AgentChannel agentId={tile.targetId} />;
     case 'file-viewer':
       return <FileViewerTile filePath={tile.targetId} />;
     case 'artifact-preview':
-      return (
+      return workspacePath ? (
+        <div className="h-full overflow-auto v2-scrollbar bg-v2-surface">
+          <InlineArtifactPreview filePath={tile.targetId} workspacePath={workspacePath} />
+        </div>
+      ) : (
         <div className="p-4 text-v2-text-muted text-sm">
-          Artifact: {tile.targetId}
+          No workspace available
         </div>
       );
     case 'subagent-view':
-      return (
-        <div className="p-4 text-v2-text-muted text-sm">
-          Subagent: {tile.targetId}
-        </div>
-      );
+      return <SubagentTile subagentId={tile.targetId} />;
     case 'timeline-view':
       return <TimelineTile />;
     case 'workspace-browser':

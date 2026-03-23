@@ -29,6 +29,8 @@ import { useWorkspaceConnection } from './hooks/useWorkspaceConnection';
 import { useWizardStore } from './stores/wizardStore';
 import { debugLog } from './utils/debugLogger';
 import type { Notification } from './stores/notificationStore';
+import { useMessageStore } from './stores/v2/messageStore';
+import { useTileStore } from './stores/v2/tileStore';
 import { AppShell } from './components/v2/layout/AppShell';
 
 function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
@@ -176,7 +178,7 @@ export function App() {
     enabled: !isAnswerBrowserOpen && !isShortcutsModalOpen && !isConfigEditorOpen,
   });
 
-  const { status, startCoordination, continueConversation, cancelCoordination, error } = useWebSocket({
+  const { status, startCoordination, continueConversation, cancelCoordination, broadcastMessage, error } = useWebSocket({
     sessionId,
     autoConnect: true,
   });
@@ -264,6 +266,9 @@ export function App() {
 
   const handleNewSession = useCallback(() => {
     reset();
+    // Also reset v2 stores so stale tiles/messages don't linger
+    useMessageStore.getState().reset();
+    useTileStore.getState().reset();
     setSessionId(crypto.randomUUID());
   }, [reset]);
 
@@ -345,6 +350,9 @@ export function App() {
         cancelCoordination={cancelCoordination}
         selectedConfig={selectedConfig}
         onConfigChange={handleConfigChange}
+        onSessionChange={handleSessionChange}
+        onNewSession={handleNewSession}
+        broadcastMessage={broadcastMessage}
       />
     );
   }

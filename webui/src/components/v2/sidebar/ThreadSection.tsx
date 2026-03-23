@@ -1,4 +1,5 @@
 import { useMessageStore } from '../../../stores/v2/messageStore';
+import { useTileStore } from '../../../stores/v2/tileStore';
 import { SidebarItem } from './SessionSection';
 
 interface ThreadSectionProps {
@@ -7,6 +8,16 @@ interface ThreadSectionProps {
 
 export function ThreadSection({ collapsed }: ThreadSectionProps) {
   const threads = useMessageStore((s) => s.threads);
+  const addTile = useTileStore((s) => s.addTile);
+
+  const handleThreadClick = (threadId: string, label: string) => {
+    addTile({
+      id: `subagent-${threadId}`,
+      type: 'subagent-view',
+      targetId: threadId,
+      label,
+    });
+  };
 
   return (
     <div className="py-1">
@@ -20,18 +31,22 @@ export function ThreadSection({ collapsed }: ThreadSectionProps) {
 
       {threads.length > 0 ? (
         <div className="space-y-0.5">
-          {threads.map((thread) => (
-            <SidebarItem
-              key={thread.id}
-              collapsed={collapsed}
-              icon={
-                <span className={`w-2 h-2 rounded-full ${
-                  thread.status === 'running' ? 'bg-v2-online animate-pulse' : 'bg-v2-offline'
-                }`} />
-              }
-              label={thread.task ? thread.task.slice(0, 30) : thread.id}
-            />
-          ))}
+          {threads.map((thread) => {
+            const label = thread.task ? thread.task.slice(0, 30) : thread.id;
+            return (
+              <SidebarItem
+                key={thread.id}
+                collapsed={collapsed}
+                icon={
+                  <span className={`w-2 h-2 rounded-full ${
+                    thread.status === 'running' ? 'bg-v2-online animate-pulse' : 'bg-v2-offline'
+                  }`} />
+                }
+                label={label}
+                onClick={() => handleThreadClick(thread.id, label)}
+              />
+            );
+          })}
         </div>
       ) : (
         !collapsed && (

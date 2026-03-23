@@ -96,6 +96,19 @@
   background: var(--v2-resize-handle-hover);
 }
 
+/* v2 Vertical resize handle styling */
+[data-panel-group-direction="vertical"] > [data-resize-handle] {
+  height: 2px;
+  background: var(--v2-resize-handle);
+  transition: background 0.15s, height 0.15s;
+}
+
+[data-panel-group-direction="vertical"] > [data-resize-handle]:hover,
+[data-panel-group-direction="vertical"] > [data-resize-handle][data-resize-handle-active] {
+  height: 4px;
+  background: var(--v2-resize-handle-hover);
+}
+
 /* v2 Scrollbar */
 .v2-scrollbar::-webkit-scrollbar {
   width: 8px;

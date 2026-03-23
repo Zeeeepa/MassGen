@@ -1,4 +1,4 @@
-import { TimelineView } from '../../timeline/TimelineView';
+import { V2TimelineView } from './V2TimelineView';
 import { useTileStore } from '../../../stores/v2/tileStore';
 
 export function TimelineTile() {
@@ -6,9 +6,8 @@ export function TimelineTile() {
 
   return (
     <div className="h-full overflow-auto v2-scrollbar bg-v2-base">
-      <TimelineView
+      <V2TimelineView
         onNodeClick={(node) => {
-          // Open agent channel when clicking a timeline node
           if (node.agentId) {
             addTile({
               id: `channel-${node.agentId}`,

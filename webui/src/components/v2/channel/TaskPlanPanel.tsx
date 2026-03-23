@@ -1,6 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { cn } from '../../../lib/utils';
 import { useMessageStore } from '../../../stores/v2/messageStore';
+
+const DEFAULT_PANEL_WIDTH = 420;
+const MIN_PANEL_WIDTH = 360;
+const MAX_PANEL_WIDTH = 720;
 
 const STATUS_ICONS: Record<string, string> = {
   pending: '\u00B7',
@@ -26,7 +31,49 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 export function TaskPlanPanel() {
   const [collapsed, setCollapsed] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const taskPlan = useMessageStore((s) => s.taskPlan);
+  const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState) return;
+
+      const delta = resizeState.startX - event.clientX;
+      const nextWidth = Math.min(
+        MAX_PANEL_WIDTH,
+        Math.max(MIN_PANEL_WIDTH, resizeState.startWidth + delta)
+      );
+      setPanelWidth(nextWidth);
+    };
+
+    const handleMouseUp = () => {
+      resizeStateRef.current = null;
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+  }, []);
+
+  const startResize = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    resizeStateRef.current = {
+      startX: event.clientX,
+      startWidth: panelWidth,
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
 
   if (!taskPlan || taskPlan.length === 0) return null;
 
@@ -59,12 +106,27 @@ export function TaskPlanPanel() {
 
   return (
     <div
+      data-testid="task-plan-panel"
       className={cn(
-        'absolute right-3 top-3 z-10 w-[320px]',
+        'absolute right-3 top-3 z-10 max-w-[calc(100%-1.5rem)]',
         'bg-v2-surface-raised border border-v2-border rounded-v2-card shadow-lg',
         'animate-v2-fade-in'
       )}
+      style={{ width: `${panelWidth}px` }}
     >
+      <button
+        data-testid="task-plan-resize-handle"
+        type="button"
+        aria-label="Resize task plan panel"
+        onMouseDown={startResize}
+        className={cn(
+          'absolute left-0 top-0 h-full w-3 -translate-x-1/2',
+          'cursor-col-resize rounded-full'
+        )}
+      >
+        <span className="absolute inset-y-4 left-1/2 w-px -translate-x-1/2 bg-v2-border" />
+      </button>
+
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-v2-border-subtle">
         <div className="flex items-center gap-2">

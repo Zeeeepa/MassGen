@@ -9,6 +9,7 @@ import type {
   ErrorMessage,
   SubagentSpawnMessage,
   SubagentStartedMessage,
+  BroadcastMessage,
 } from '../../../../stores/v2/messageStore';
 import { ContentMessageView } from './ContentMessageView';
 import { ToolCallMessageView } from './ToolCallMessageView';
@@ -18,6 +19,7 @@ import { RoundDividerView } from './RoundDividerView';
 import { CompletionMessageView } from './CompletionMessageView';
 import { ErrorMessageView } from './StatusMessageView';
 import { SubagentSpawnView, SubagentStartedView } from './SubagentMessageView';
+import { BroadcastMessageView } from './BroadcastMessageView';
 
 interface MessageRendererProps {
   message: ChannelMessage;
@@ -48,6 +50,8 @@ export function MessageRenderer({ message }: MessageRendererProps) {
       return <SubagentSpawnView message={message as SubagentSpawnMessage} />;
     case 'subagent-started':
       return <SubagentStartedView message={message as SubagentStartedMessage} />;
+    case 'broadcast':
+      return <BroadcastMessageView message={message as BroadcastMessage} />;
     default:
       return null;
   }

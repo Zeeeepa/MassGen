@@ -17,6 +17,8 @@ export interface TileState {
   label: string;
 }
 
+export type Orientation = 'horizontal' | 'vertical';
+
 interface TileStoreState {
   /** All open tiles in order (left to right) */
   tiles: TileState[];
@@ -24,6 +26,8 @@ interface TileStoreState {
   activeTileId: string | null;
   /** Whether autofit mode is on (show all agents) */
   autofit: boolean;
+  /** Layout orientation for multi-tile view */
+  orientation: Orientation;
 }
 
 interface TileStoreActions {
@@ -41,6 +45,12 @@ interface TileStoreActions {
   setAutofitTiles: (tiles: TileState[]) => void;
   /** Replace all tiles */
   setTiles: (tiles: TileState[]) => void;
+  /** Move a tile to a new index in the tile list */
+  reorderTile: (tileId: string, newIndex: number) => void;
+  /** Set layout orientation */
+  setOrientation: (o: Orientation) => void;
+  /** Toggle between horizontal and vertical layout */
+  toggleOrientation: () => void;
   /** Reset to empty state */
   reset: () => void;
 }
@@ -49,6 +59,7 @@ const initialState: TileStoreState = {
   tiles: [],
   activeTileId: null,
   autofit: false,
+  orientation: 'horizontal',
 };
 
 export const useTileStore = create<TileStoreState & TileStoreActions>(
@@ -122,6 +133,23 @@ export const useTileStore = create<TileStoreState & TileStoreActions>(
         activeTileId: tiles.find((t) => t.id === state.activeTileId)?.id
           ?? tiles[0]?.id
           ?? null,
+      })),
+
+    reorderTile: (tileId, newIndex) =>
+      set((state) => {
+        const oldIndex = state.tiles.findIndex((t) => t.id === tileId);
+        if (oldIndex === -1 || oldIndex === newIndex) return state;
+        const newTiles = [...state.tiles];
+        const [moved] = newTiles.splice(oldIndex, 1);
+        newTiles.splice(newIndex, 0, moved);
+        return { tiles: newTiles };
+      }),
+
+    setOrientation: (o) => set({ orientation: o }),
+
+    toggleOrientation: () =>
+      set((state) => ({
+        orientation: state.orientation === 'horizontal' ? 'vertical' : 'horizontal',
       })),
 
     reset: () => set(initialState),

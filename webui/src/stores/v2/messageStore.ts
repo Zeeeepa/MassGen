@@ -25,7 +25,8 @@ export type ChannelMessageType =
   | 'status'
   | 'error'
   | 'subagent-spawn'
-  | 'subagent-started';
+  | 'subagent-started'
+  | 'broadcast';
 
 interface BaseMessage {
   id: string;
@@ -78,6 +79,7 @@ export interface VoteMessage extends BaseMessage {
   targetName?: string;
   reason: string;
   voteLabel: string;
+  voteRound: number;
 }
 
 export interface RoundDividerMessage extends BaseMessage {
@@ -111,6 +113,12 @@ export interface SubagentStartedMessage extends BaseMessage {
   timeoutSeconds: number;
 }
 
+export interface BroadcastMessage extends BaseMessage {
+  type: 'broadcast';
+  content: string;
+  targets: string[] | null;
+}
+
 export interface CompletionMessage extends BaseMessage {
   type: 'completion';
   label: string;
@@ -129,6 +137,7 @@ export type ChannelMessage =
   | ErrorMessage
   | SubagentSpawnMessage
   | SubagentStartedMessage
+  | BroadcastMessage
   | CompletionMessage;
 
 // ============================================================================
@@ -432,9 +441,24 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
             }
 
             case 'answer_submitted': {
-              const answerLabel = (se.data.answer_label as string) || '';
+              const rawAnswerLabel = (se.data.answer_label as string) || '';
               const answerNumber = (se.data.answer_number as number) || 1;
               const content = (se.data.content as string) || '';
+              const contentPreview = content.slice(0, 200);
+              const agentIndex = state.agentOrder.indexOf(agentId) + 1;
+              const answerLabel = rawAnswerLabel || `answer${agentIndex}.${answerNumber}`;
+              const alreadyRecorded = existing.some(
+                (message) =>
+                  message.type === 'answer' &&
+                  (
+                    (message as AnswerMessage).answerLabel === answerLabel ||
+                    (
+                      (message as AnswerMessage).answerNumber === answerNumber &&
+                      (message as AnswerMessage).contentPreview === contentPreview
+                    )
+                  )
+              );
+              if (alreadyRecorded) break;
               const msg: AnswerMessage = {
                 id: `msg-${state._counter}`,
                 type: 'answer',
@@ -442,7 +466,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
                 timestamp: se.timestamp,
                 answerLabel,
                 answerNumber,
-                contentPreview: content.slice(0, 200),
+                contentPreview,
               };
               set({
                 messages: { ...state.messages, [agentId]: [...existing, msg] },
@@ -453,8 +477,17 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
 
             case 'vote': {
               const targetId = (se.data.target_id as string) || (se.data.voted_for as string) || '';
-              const reason = (se.data.reason as string) || '';
+              const reason = ((se.data.reason as string) || '').trim();
               const targetModel = state.agentModels[targetId];
+              const voteRound = state.currentRound[agentId] || se.round_number || 0;
+              const alreadyRecorded = existing.some(
+                (message) =>
+                  message.type === 'vote' &&
+                  (message as VoteMessage).voteRound === voteRound &&
+                  (message as VoteMessage).targetId === targetId &&
+                  (message as VoteMessage).reason === reason
+              );
+              if (alreadyRecorded) break;
               const existingVotes = existing.filter((m) => m.type === 'vote').length;
               const agentIndex = state.agentOrder.indexOf(agentId) + 1;
               const voteLabel = `vote${agentIndex}.${existingVotes + 1}`;
@@ -467,6 +500,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
                 targetName: targetModel ? `${targetId} (${targetModel})` : targetId,
                 reason,
                 voteLabel,
+                voteRound,
               };
               set({
                 messages: { ...state.messages, [agentId]: [...existing, msg] },
@@ -548,8 +582,52 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
         // Legacy tool_call/tool_result — ignored when structured_event is active
         case 'tool_call':
         case 'tool_result':
-        case 'hook_execution':
           break;
+
+        case 'hook_execution': {
+          const hookEv = event as unknown as {
+            agent_id: string;
+            tool_call_id?: string;
+            hook_info: HookExecutionInfo;
+          };
+          if (!hookEv.agent_id || !state.messages[hookEv.agent_id]) break;
+          const hookAgentId = hookEv.agent_id;
+          const hookExisting = [...(state.messages[hookAgentId] || [])];
+          const hookInfo = hookEv.hook_info;
+          const toolCallId = hookEv.tool_call_id;
+
+          // Find the matching tool call — scan backwards
+          let found = false;
+          for (let i = hookExisting.length - 1; i >= 0; i--) {
+            const msg = hookExisting[i];
+            if (msg.type !== 'tool-call') continue;
+            const tc = msg as ToolCallMessage;
+            if (toolCallId && tc.toolId === toolCallId) {
+              // Exact match by tool_call_id
+              const arrKey = hookInfo.hook_type === 'pre' ? 'preHooks' : 'postHooks';
+              hookExisting[i] = {
+                ...tc,
+                [arrKey]: [...(tc[arrKey] || []), hookInfo],
+              };
+              found = true;
+              break;
+            } else if (!toolCallId) {
+              // No tool_call_id — attach to most recent tool call
+              const arrKey = hookInfo.hook_type === 'pre' ? 'preHooks' : 'postHooks';
+              hookExisting[i] = {
+                ...tc,
+                [arrKey]: [...(tc[arrKey] || []), hookInfo],
+              };
+              found = true;
+              break;
+            }
+          }
+
+          if (found) {
+            set({ messages: { ...state.messages, [hookAgentId]: hookExisting } });
+          }
+          break;
+        }
 
         case 'new_answer': {
           if ('agent_id' in event && 'content' in event) {
@@ -559,8 +637,23 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
             const agentIndex = state.agentOrder.indexOf(agentId) + 1;
             const label = answerLabel || `answer${agentIndex}.${answerNumber}`;
             const content = event.content as string;
+            const contentPreview = content.slice(0, 200);
 
             const existing = state.messages[agentId] || [];
+            const alreadyRecorded = existing.some(
+              (message) =>
+                message.type === 'answer' &&
+                (
+                  (message as AnswerMessage).answerLabel === label ||
+                  (
+                    (message as AnswerMessage).answerNumber === answerNumber &&
+                    (message as AnswerMessage).contentPreview === contentPreview
+                  )
+                )
+            );
+            if (alreadyRecorded) {
+              break;
+            }
             const msg: AnswerMessage = {
               id: `msg-${state._counter}`,
               type: 'answer',
@@ -568,7 +661,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
               timestamp: event.timestamp < 1e12 ? event.timestamp * 1000 : event.timestamp,
               answerLabel: label,
               answerNumber,
-              contentPreview: content.slice(0, 200),
+              contentPreview,
             };
             set({
               messages: { ...state.messages, [agentId]: [...existing, msg] },
@@ -582,9 +675,20 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
           if ('voter_id' in event && 'target_id' in event) {
             const voterId = event.voter_id as string;
             const targetId = event.target_id as string;
-            const reason = ('reason' in event ? event.reason : '') as string;
+            const reason = (('reason' in event ? event.reason : '') as string).trim();
             const agentIndex = state.agentOrder.indexOf(voterId) + 1;
             const existing = state.messages[voterId] || [];
+            const voteRound = state.currentRound[voterId] || 0;
+            const alreadyRecorded = existing.some(
+              (message) =>
+                message.type === 'vote' &&
+                (message as VoteMessage).voteRound === voteRound &&
+                (message as VoteMessage).targetId === targetId &&
+                (message as VoteMessage).reason === reason
+            );
+            if (alreadyRecorded) {
+              break;
+            }
 
             // Count existing votes for this agent to determine vote number
             const existingVotes = existing.filter((m) => m.type === 'vote').length;
@@ -600,6 +704,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
               targetName: targetModel ? `${targetId} (${targetModel})` : targetId,
               reason,
               voteLabel,
+              voteRound,
             };
             set({
               messages: { ...state.messages, [voterId]: [...existing, msg] },
@@ -676,8 +781,16 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
               status: 'running' as const,
               startTime: event.timestamp,
             }));
+            // Initialize message arrays for subagent IDs so their
+            // structured_event messages are stored instead of dropped
+            const newMessages = { ...state.messages, [agentId]: [...existing, msg] };
+            for (const sid of ev.subagent_ids || []) {
+              if (!newMessages[sid]) {
+                newMessages[sid] = [];
+              }
+            }
             set({
-              messages: { ...state.messages, [agentId]: [...existing, msg] },
+              messages: newMessages,
               threads: [...state.threads, ...newThreads],
               _counter: state._counter + 1,
             });
@@ -711,8 +824,13 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
                 startTime: event.timestamp,
               },
             ];
+            // Initialize message array for subagent ID
+            const newMessages = { ...state.messages, [agentId]: [...existing, msg] };
+            if (!newMessages[ev.subagent_id]) {
+              newMessages[ev.subagent_id] = [];
+            }
             set({
-              messages: { ...state.messages, [agentId]: [...existing, msg] },
+              messages: newMessages,
               threads: newThreads,
               _counter: state._counter + 1,
             });
@@ -747,13 +865,49 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
           break;
         }
 
+        case 'broadcast_sent' as string: {
+          const broadcastMsg = (event as unknown as { message: string }).message || '';
+          const broadcastTargets = (event as unknown as { targets: string[] | null }).targets;
+          const now = Date.now();
+          const newMsgs = { ...state.messages };
+          let ctr = state._counter;
+
+          // Determine which agents receive the broadcast message
+          const targetAgents = broadcastTargets
+            ? broadcastTargets.filter((t) => state.messages[t] !== undefined)
+            : state.agentOrder;
+
+          for (const aid of targetAgents) {
+            const msgs = newMsgs[aid] || [];
+            const msg: BroadcastMessage = {
+              id: `msg-${ctr++}`,
+              type: 'broadcast',
+              agentId: aid,
+              timestamp: now,
+              content: broadcastMsg,
+              targets: broadcastTargets,
+            };
+            newMsgs[aid] = [...msgs, msg];
+          }
+
+          set({ messages: newMsgs, _counter: ctr });
+          break;
+        }
+
         // Events handled by agentStore only (no message for channel view)
+        case 'state_snapshot': {
+          const snapshot = event as {
+            current_phase?: string;
+          };
+          set({ currentPhase: snapshot.current_phase || null });
+          break;
+        }
+
         case 'consensus_reached':
         case 'done':
         case 'init_status':
         case 'preparation_status':
         case 'vote_distribution':
-        case 'state_snapshot':
         case 'orchestrator_event':
         case 'timeout_status':
         case 'file_change':

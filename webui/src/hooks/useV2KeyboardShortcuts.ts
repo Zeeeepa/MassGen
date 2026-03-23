@@ -58,6 +58,28 @@ export function useV2KeyboardShortcuts() {
         }
       }
 
+      // Ctrl/Cmd+Shift+Left/Right: move active tile
+      if (isMod && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        const store = useTileStore.getState();
+        const { tiles, activeTileId } = store;
+        if (!activeTileId || tiles.length < 2) return;
+        const currentIndex = tiles.findIndex((t) => t.id === activeTileId);
+        if (currentIndex === -1) return;
+        const newIndex = e.key === 'ArrowLeft'
+          ? Math.max(0, currentIndex - 1)
+          : Math.min(tiles.length - 1, currentIndex + 1);
+        if (newIndex !== currentIndex) {
+          store.reorderTile(activeTileId, newIndex);
+        }
+      }
+
+      // Ctrl/Cmd+Shift+O: toggle orientation
+      if (isMod && e.shiftKey && (e.key === 'O' || e.key === 'o')) {
+        e.preventDefault();
+        useTileStore.getState().toggleOrientation();
+      }
+
       // Escape: Close secondary tiles (go back to single)
       if (e.key === 'Escape') {
         const store = useTileStore.getState();

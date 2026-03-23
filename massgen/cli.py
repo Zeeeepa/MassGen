@@ -11472,7 +11472,10 @@ def _cli_main_continued(args):
 
                 print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
-                browser_url = auto_url if auto_url else f"http://{args.web_host}:{args.web_port}"
+                browser_url = auto_url if auto_url else f"http://{args.web_host}:{args.web_port}/?v=2"
+                # Ensure v=2 param is present on auto_url too
+                if auto_url and "v=2" not in browser_url:
+                    browser_url += "&v=2"
 
                 def open_browser():
                     import time
@@ -11634,7 +11637,7 @@ def _cli_main_continued(args):
 
             print(f"{BRIGHT_CYAN}🌐 Starting MassGen Web Quickstart...{RESET}")
             print(
-                f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}/setup?temporary=1{RESET}",
+                f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}/?v=2&temporary=1&wizard=open{RESET}",
             )
             print(
                 f"{BRIGHT_YELLOW}   This temporary setup session will close automatically when complete{RESET}\n",
@@ -11717,11 +11720,14 @@ def _cli_main_continued(args):
                 # Remove trailing slash to avoid double slashes
                 browser_url = browser_url.rstrip("/")
 
-                # Check for --setup or --quickstart flags to open specific pages
+                # Default to v2 UI; --quickstart opens the wizard overlay,
+                # --setup opens the setup overlay in v2.
                 if getattr(args, "setup", False):
-                    browser_url += "/setup"
+                    browser_url += "/?v=2&setup=open"
                 elif getattr(args, "quickstart", False):
-                    browser_url += "/?wizard=open"
+                    browser_url += "/?v=2&wizard=open"
+                else:
+                    browser_url += "/?v=2"
 
                 def open_browser():
                     import time
@@ -11875,7 +11881,9 @@ def _cli_main_continued(args):
 
                         print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
-                        browser_url = auto_url if auto_url else f"http://{args.web_host}:{args.web_port}"
+                        browser_url = auto_url if auto_url else f"http://{args.web_host}:{args.web_port}/?v=2"
+                        if auto_url and "v=2" not in browser_url:
+                            browser_url += "&v=2"
 
                         def open_browser():
                             import time
@@ -12073,7 +12081,9 @@ def _cli_main_continued(args):
 
                                 print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
-                                browser_url = auto_url if auto_url else f"http://{args.web_host}:{args.web_port}"
+                                browser_url = auto_url if auto_url else f"http://{args.web_host}:{args.web_port}/?v=2"
+                                if auto_url and "v=2" not in browser_url:
+                                    browser_url += "&v=2"
 
                                 def open_browser():
                                     import time

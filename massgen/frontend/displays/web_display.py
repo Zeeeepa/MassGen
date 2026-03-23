@@ -57,6 +57,7 @@ class WebDisplay(BaseDisplay):
         self._vote_targets: dict[str, str] = {}  # agent_id -> voted_for
         self._selected_agent: str | None = None
         self._final_answer: str | None = None
+        self._current_phase: str = "idle"
 
         # Timeline events for visualization (answers, votes, final with context sources)
         self._timeline_events: list[dict[str, Any]] = []
@@ -603,6 +604,7 @@ class WebDisplay(BaseDisplay):
 
     def notify_phase(self, phase: str) -> None:
         """Send the current coordination phase directly to web clients."""
+        self._current_phase = phase
         self._emit(
             "structured_event",
             {
@@ -885,6 +887,7 @@ class WebDisplay(BaseDisplay):
             "vote_targets": dict(self._vote_targets),
             "selected_agent": self._selected_agent,
             "final_answer": self._final_answer,
+            "current_phase": self._current_phase,
             "orchestrator_events": list(self.orchestrator_events),
             "theme": self.theme,
         }

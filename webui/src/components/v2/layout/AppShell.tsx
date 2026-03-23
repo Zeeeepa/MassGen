@@ -4,12 +4,18 @@ import { useAgentStore } from '../../../stores/agentStore';
 import { useMessageStore } from '../../../stores/v2/messageStore';
 import { useThemeStore } from '../../../stores/themeStore';
 import { useTileStore } from '../../../stores/v2/tileStore';
+import { useWizardStore } from '../../../stores/wizardStore';
+import { useSetupStore } from '../../../stores/setupStore';
 import { useV2KeyboardShortcuts } from '../../../hooks/useV2KeyboardShortcuts';
 import type { ConnectionStatus } from '../../../hooks/useWebSocket';
+import { useModeStore } from '../../../stores/v2/modeStore';
 import { Sidebar } from '../sidebar/Sidebar';
 import { TileContainer } from '../tiles/TileContainer';
 import { GlobalInputBar } from './GlobalInputBar';
 import { FinalAnswerOverlay } from './FinalAnswerOverlay';
+import { ModeConfigBar } from './ModeConfigBar';
+import { V2QuickstartWizard } from './V2QuickstartWizard';
+import { V2SetupOverlay } from './V2SetupOverlay';
 import { LaunchIndicator } from './LaunchIndicator';
 
 interface AppShellProps {
@@ -19,6 +25,9 @@ interface AppShellProps {
   cancelCoordination?: () => void;
   selectedConfig: string | null;
   onConfigChange: (configPath: string) => void;
+  onSessionChange?: (sessionId: string) => void;
+  onNewSession?: () => void;
+  broadcastMessage?: (message: string, targets: string[] | null) => void;
 }
 
 export function AppShell({
@@ -28,9 +37,51 @@ export function AppShell({
   cancelCoordination,
   selectedConfig,
   onConfigChange,
+  onSessionChange,
+  onNewSession,
+  broadcastMessage,
 }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showFinalAnswer, setShowFinalAnswer] = useState(false);
+  const [configRefreshTrigger, setConfigRefreshTrigger] = useState(0);
+
+  // Wizard state
+  const isWizardOpen = useWizardStore((s) => s.isOpen);
+  const openWizard = useWizardStore((s) => s.openWizard);
+
+  // Setup overlay state
+  const isSetupOpen = useSetupStore((s) => s.isOpen);
+  const openSetup = useSetupStore((s) => s.openSetup);
+
+  // Check if first-time setup is needed, or if wizard/setup URL params are set
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('setup') === 'open') {
+      openSetup();
+      return;
+    }
+    if (urlParams.get('wizard') === 'open') {
+      openWizard();
+      return;
+    }
+
+    fetch('/api/setup/status')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.needs_setup) {
+          openSetup();
+        }
+      })
+      .catch(() => {});
+  }, [openWizard, openSetup]);
+
+  // Determine temporary mode from URL
+  const initialTemporaryQuickstart = new URLSearchParams(window.location.search).get('temporary') === '1';
+
+  const handleWizardConfigSaved = (configPath: string) => {
+    onConfigChange(configPath);
+    setConfigRefreshTrigger((n) => n + 1);
+  };
 
   // Keyboard shortcuts
   useV2KeyboardShortcuts();
@@ -90,12 +141,26 @@ export function AppShell({
   // Keep the launch sequence visible until the first meaningful agent activity arrives.
   const isLaunching = !!question && !isComplete && !hasRenderableActivity;
 
+  // Lock/unlock mode bar during coordination execution
+  const isRunning = !!question && !isComplete;
+  const prevIsRunningRef = useRef(false);
+  useEffect(() => {
+    if (isRunning && !prevIsRunningRef.current) {
+      useModeStore.getState().lock();
+    } else if (!isRunning && prevIsRunningRef.current) {
+      useModeStore.getState().unlock();
+    }
+    prevIsRunningRef.current = isRunning;
+  }, [isRunning]);
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-v2-main text-v2-text font-sans">
       {/* Sidebar */}
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onSessionChange={onSessionChange}
+        onNewSession={onNewSession}
       />
 
       {/* Main area */}
@@ -124,6 +189,9 @@ export function AppShell({
           </div>
         </div>
 
+        {/* Mode configuration bar */}
+        <ModeConfigBar />
+
         {/* Global input bar — start session or broadcast */}
         <GlobalInputBar
           wsStatus={wsStatus}
@@ -135,8 +203,21 @@ export function AppShell({
           hasActiveSession={!!question}
           isComplete={isComplete}
           isLaunching={isLaunching}
+          broadcastMessage={broadcastMessage}
+          refreshTrigger={configRefreshTrigger}
         />
       </div>
+
+      {/* V2 Setup Overlay */}
+      {isSetupOpen && <V2SetupOverlay />}
+
+      {/* V2 Quickstart Wizard */}
+      {isWizardOpen && (
+        <V2QuickstartWizard
+          onConfigSaved={handleWizardConfigSaved}
+          temporaryMode={initialTemporaryQuickstart}
+        />
+      )}
 
       {/* Final Answer Overlay */}
       {showFinalAnswer && (

@@ -9,6 +9,8 @@ import { ToolBatchView } from './messages/ToolBatchView';
 import { ModeBar } from './ModeBar';
 import { TaskPlanPanel } from './TaskPlanPanel';
 import { StreamingIndicator } from './StreamingIndicator';
+import { TileDragHandle } from '../tiles/TileDragHandle';
+import { useTileDrag } from '../tiles/TileDragContext';
 
 interface AgentChannelProps {
   agentId: string;
@@ -114,6 +116,7 @@ interface ChannelHeaderProps {
 function ChannelHeader({ agentId, agent, agentOrder }: ChannelHeaderProps) {
   const setAutofitTiles = useTileStore((s) => s.setAutofitTiles);
   const isAutofit = useTileStore((s) => s.autofit);
+  const { isDraggable } = useTileDrag();
   const agentColor = getAgentColor(agentId, agentOrder);
   const agentIndex = agentOrder.indexOf(agentId);
 
@@ -143,6 +146,9 @@ function ChannelHeader({ agentId, agent, agentOrder }: ChannelHeaderProps) {
       className="flex items-center gap-3 px-4 py-2.5 border-b border-v2-border-subtle bg-v2-surface shrink-0"
       style={{ borderLeftWidth: '3px', borderLeftColor: agentColor.hex }}
     >
+      {/* Drag handle — before numbered badge */}
+      {isDraggable && <TileDragHandle />}
+
       {/* Numbered color badge */}
       <span
         className="flex items-center justify-center w-5 h-5 rounded text-[11px] font-bold text-white shrink-0"

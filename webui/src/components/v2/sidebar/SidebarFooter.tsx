@@ -1,5 +1,6 @@
 import { cn } from '../../../lib/utils';
 import { useThemeStore } from '../../../stores/themeStore';
+import { useSetupStore } from '../../../stores/setupStore';
 
 interface SidebarFooterProps {
   collapsed: boolean;
@@ -8,6 +9,7 @@ interface SidebarFooterProps {
 export function SidebarFooter({ collapsed }: SidebarFooterProps) {
   const mode = useThemeStore((s) => s.mode);
   const setMode = useThemeStore((s) => s.setMode);
+  const openSetup = useSetupStore((s) => s.openSetup);
 
   const toggleTheme = () => {
     const effectiveTheme = mode === 'system' ? 'dark' : mode;
@@ -19,6 +21,7 @@ export function SidebarFooter({ collapsed }: SidebarFooterProps) {
       <div className={cn('flex items-center', collapsed ? 'justify-center' : 'justify-between')}>
         {!collapsed && (
           <button
+            onClick={() => openSetup()}
             className="flex items-center gap-2 text-xs text-v2-text-muted hover:text-v2-text transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">

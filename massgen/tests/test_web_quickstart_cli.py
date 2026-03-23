@@ -185,3 +185,14 @@ async def test_web_display_notify_phase_emits_structured_phase_change_event():
     assert event["type"] == "structured_event"
     assert event["event_type"] == "phase_change"
     assert event["data"] == {"phase": "coordinating"}
+
+
+def test_web_display_state_snapshot_includes_current_phase():
+    """Late-joining WebUI clients should recover the current mode bar phase."""
+    display = WebDisplay(agent_ids=["agent_a"], session_id="session-1")
+
+    display.notify_phase("coordinating")
+
+    snapshot = display.get_state_snapshot()
+
+    assert snapshot["current_phase"] == "coordinating"

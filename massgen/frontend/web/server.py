@@ -14,6 +14,7 @@ import logging
 import logging.handlers
 import os
 import uuid
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ from massgen.frontend.displays.web_display import WebDisplay
 # Set up logging for workspace browser debugging
 workspace_logger = logging.getLogger("massgen.workspace")
 workspace_logger.setLevel(logging.DEBUG)
+logger = workspace_logger
 
 # Create log directory and file handler for persistent debugging
 _webui_log_dir = Path.home() / ".massgen" / "webui_logs"
@@ -201,6 +203,137 @@ def _scan_workspace_files(workspace_path: Path) -> list[dict]:
     return files
 
 
+def _iter_workspace_search_roots(log_session_dir: Path | None) -> list[Path]:
+    """Return candidate log roots that may contain answer/final workspaces."""
+    if not log_session_dir:
+        return []
+
+    log_session_dir = Path(log_session_dir)
+    if not log_session_dir.exists():
+        return []
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+
+    def add_root(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved in seen or not resolved.exists():
+            return
+        seen.add(resolved)
+        roots.append(resolved)
+
+    add_root(log_session_dir)
+
+    for turn_dir in sorted(log_session_dir.glob("turn_*")):
+        for attempt_dir in sorted(turn_dir.glob("attempt_*")):
+            add_root(attempt_dir)
+
+    return roots
+
+
+def _discover_logged_workspace_candidates(log_session_dir: Path | None) -> dict[str, list[str]]:
+    """Find answer/final workspaces recorded in the session logs.
+
+    Returns paths grouped by agent, ordered by preference:
+    1. Final workspace snapshots
+    2. Answer snapshots, newest first
+    """
+    candidates: dict[str, list[str]] = defaultdict(list)
+
+    def add_candidate(agent_id: str, workspace_path: Path) -> None:
+        resolved = str(workspace_path.resolve())
+        if resolved not in candidates[agent_id]:
+            candidates[agent_id].append(resolved)
+
+    for root in _iter_workspace_search_roots(log_session_dir):
+        final_dir = root / "final"
+        if final_dir.exists():
+            for agent_dir in sorted(final_dir.iterdir()):
+                if not agent_dir.is_dir() or not agent_dir.name.startswith("agent_"):
+                    continue
+                workspace_path = agent_dir / "workspace"
+                if workspace_path.exists() and workspace_path.is_dir():
+                    add_candidate(agent_dir.name, workspace_path)
+
+        for agent_dir in sorted(root.iterdir()):
+            if not agent_dir.is_dir() or not agent_dir.name.startswith("agent_"):
+                continue
+            for timestamp_dir in sorted(agent_dir.iterdir(), reverse=True):
+                if not timestamp_dir.is_dir():
+                    continue
+                answer_file = timestamp_dir / "answer.txt"
+                workspace_path = timestamp_dir / "workspace"
+                if answer_file.exists() and workspace_path.exists() and workspace_path.is_dir():
+                    add_candidate(agent_dir.name, workspace_path)
+
+    return dict(candidates)
+
+
+def _resolve_watch_session_workspaces(
+    status_data: dict[str, Any] | None,
+    log_session_dir: Path | None,
+) -> list[tuple[str, list[dict]]]:
+    """Choose the best visible workspace per agent for the workspace websocket.
+
+    Prefers the live workspace from status.json when it already contains visible
+    files. If the live workspace is metadata-only, falls back to logged answer
+    or final snapshots so the browser can still surface meaningful artifacts.
+    """
+    agents_data = (status_data or {}).get("agents", {})
+    current_paths_by_agent: dict[str, str] = {}
+    ordered_agent_ids: list[str] = []
+
+    for agent_id, agent_info in agents_data.items():
+        ordered_agent_ids.append(agent_id)
+        workspace_paths = agent_info.get("workspace_paths", {}) or {}
+        workspace_path = workspace_paths.get("workspace")
+        if workspace_path and Path(workspace_path).exists():
+            current_paths_by_agent[agent_id] = str(Path(workspace_path).resolve())
+
+    logged_candidates = _discover_logged_workspace_candidates(log_session_dir)
+    for agent_id in logged_candidates:
+        if agent_id not in ordered_agent_ids:
+            ordered_agent_ids.append(agent_id)
+
+    scan_cache: dict[str, list[dict]] = {}
+
+    def scan(path: str) -> list[dict]:
+        if path not in scan_cache:
+            scan_cache[path] = _scan_workspace_files(Path(path))
+        return scan_cache[path]
+
+    resolved: list[tuple[str, list[dict]]] = []
+    seen_paths: set[str] = set()
+
+    for agent_id in ordered_agent_ids:
+        candidates: list[str] = []
+        current_path = current_paths_by_agent.get(agent_id)
+        if current_path:
+            candidates.append(current_path)
+        for candidate in logged_candidates.get(agent_id, []):
+            if candidate not in candidates:
+                candidates.append(candidate)
+        if not candidates:
+            continue
+
+        chosen_path = candidates[0]
+        chosen_files = scan(chosen_path)
+        if not chosen_files:
+            for candidate in candidates[1:]:
+                candidate_files = scan(candidate)
+                if candidate_files:
+                    chosen_path = candidate
+                    chosen_files = candidate_files
+                    break
+
+        if chosen_path in seen_paths:
+            continue
+        seen_paths.add(chosen_path)
+        resolved.append((chosen_path, chosen_files))
+
+    return resolved
+
+
 class WorkspaceConnectionManager:
     """Manages WebSocket connections for workspace file listing.
 
@@ -336,6 +469,21 @@ class ConnectionManager:
             "completed_at": time.time(),
         }
 
+        # Persist to disk via SessionRegistry
+        try:
+            from massgen.session import SessionRegistry
+
+            registry = SessionRegistry()
+            registry.register_session(
+                session_id=session_id,
+                config_path=config,
+                description=question[:100] if question else None,
+                status="completed",
+                source="webui",
+            )
+        except Exception:
+            logger.warning("Failed to persist session to registry", exc_info=True)
+
     async def connect(self, websocket: WebSocket, session_id: str) -> None:
         """Accept and register a WebSocket connection."""
         await websocket.accept()
@@ -451,6 +599,27 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Load persisted WebUI sessions from disk
+    try:
+        from massgen.session import SessionRegistry
+
+        _registry = SessionRegistry()
+        for _session in _registry.list_sessions(status="completed"):
+            if _session.get("source") == "webui":
+                _sid = _session["session_id"]
+                if _sid not in manager.completed_sessions:
+                    manager.completed_sessions[_sid] = {
+                        "question": _session.get("description"),
+                        "config": _session.get("config_path"),
+                        "completed_at": _session.get("end_time"),
+                    }
+        logger.info(
+            "Loaded %d persisted WebUI sessions",
+            len(manager.completed_sessions),
+        )
+    except Exception:
+        logger.warning("Failed to load persisted sessions", exc_info=True)
 
     # =========================================================================
     # API Routes
@@ -616,8 +785,10 @@ def create_app(
             config_path = project_config_path
             has_config = False
 
-        # Check Docker using diagnostics
-        diagnostics = diagnose_docker()
+        # Check Docker using diagnostics (run in thread to avoid blocking event loop)
+        import asyncio
+
+        diagnostics = await asyncio.to_thread(diagnose_docker)
 
         return {
             "needs_setup": not has_config,
@@ -636,9 +807,11 @@ def create_app(
         Returns detailed information about Docker installation status,
         daemon availability, permissions, and installed images.
         """
+        import asyncio
+
         from massgen.utils.docker_diagnostics import diagnose_docker
 
-        diagnostics = diagnose_docker()
+        diagnostics = await asyncio.to_thread(diagnose_docker)
         return diagnostics.to_dict()
 
     @app.post("/api/quickstart/complete")
@@ -1743,6 +1916,62 @@ def create_app(
         """Create a new coordination session."""
         session_id = str(uuid.uuid4())
         return JSONResponse({"session_id": session_id})
+
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        """Delete a session and clean up its resources."""
+        removed = False
+
+        # Remove from completed sessions
+        if session_id in manager.completed_sessions:
+            del manager.completed_sessions[session_id]
+            removed = True
+
+        # Remove display
+        if session_id in manager.displays:
+            del manager.displays[session_id]
+            removed = True
+
+        # Cancel and remove task
+        if session_id in manager.tasks:
+            task = manager.tasks[session_id]
+            if not task.done():
+                task.cancel()
+            del manager.tasks[session_id]
+            removed = True
+
+        # Remove orchestrator
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+            removed = True
+
+        # Remove log dir reference
+        if session_id in manager.session_log_dirs:
+            del manager.session_log_dirs[session_id]
+
+        # Remove config reference
+        if session_id in manager.session_configs:
+            del manager.session_configs[session_id]
+
+        # Remove from persistent registry
+        try:
+            from massgen.session import SessionRegistry
+
+            SessionRegistry().delete_session(session_id)
+        except Exception:
+            logger.warning(
+                "Failed to delete session %s from registry",
+                session_id,
+                exc_info=True,
+            )
+
+        if not removed:
+            return JSONResponse(
+                {"error": "Session not found"},
+                status_code=404,
+            )
+
+        return JSONResponse({"status": "deleted", "session_id": session_id})
 
     @app.get("/api/workspace/{session_id}/{agent_id}")
     async def get_workspace_files(session_id: str, agent_id: str):
@@ -3763,8 +3992,15 @@ def create_app(
                             },
                         )
 
+                        mode_overrides = data.get("mode_overrides") or {}
                         task = asyncio.create_task(
-                            run_coordination(session_id, question, cfg_path, context_paths),
+                            run_coordination(
+                                session_id,
+                                question,
+                                cfg_path,
+                                context_paths,
+                                mode_overrides=mode_overrides or None,
+                            ),
                         )
                         manager.tasks[session_id] = task
                         await websocket.send_json(
@@ -3787,9 +4023,50 @@ def create_app(
                         )
 
                 elif action == "broadcast_response":
-                    # Human response to a broadcast question
-                    # TODO: Integrate with BroadcastChannel
-                    pass
+                    # Human broadcast message to agents during active session
+                    broadcast_msg = data.get("message", "")
+                    broadcast_targets = data.get("targets")  # None = all agents
+
+                    if not broadcast_msg:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": "Broadcast message cannot be empty",
+                            },
+                        )
+                    else:
+                        orchestrator = manager.orchestrators.get(session_id)
+                        if orchestrator is None:
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "message": "No active orchestrator for this session",
+                                },
+                            )
+                        else:
+                            # Ensure the human input hook is initialized
+                            orchestrator._ensure_runtime_human_input_hook_initialized()
+                            hook = orchestrator._human_input_hook
+                            if hook is not None:
+                                hook.set_pending_input(
+                                    content=broadcast_msg,
+                                    target_agents=broadcast_targets,
+                                    source="webui_broadcast",
+                                )
+                                await websocket.send_json(
+                                    {
+                                        "type": "broadcast_sent",
+                                        "message": broadcast_msg,
+                                        "targets": broadcast_targets,
+                                    },
+                                )
+                            else:
+                                await websocket.send_json(
+                                    {
+                                        "type": "error",
+                                        "message": "Human input hook not available",
+                                    },
+                                )
 
                 elif action == "continue":
                     # Continue conversation with follow-up question
@@ -3862,6 +4139,7 @@ def create_app(
 
                     # Start continuation coordination
                     next_turn = current_turn + 1
+                    cont_mode_overrides = data.get("mode_overrides") or {}
                     task = asyncio.create_task(
                         run_coordination_with_history(
                             session_id=session_id,
@@ -3870,6 +4148,7 @@ def create_app(
                             session_log_dir=session_log_dir,
                             turn_number=next_turn,
                             context_paths=context_paths,
+                            mode_overrides=cont_mode_overrides or None,
                         ),
                     )
                     manager.tasks[session_id] = task
@@ -4008,41 +4287,51 @@ def create_app(
                     # Frontend uses this on initial connect to get all workspace files
                     workspace_logger.info(f"WS watch_session request for session={session_id}")
 
+                    # Re-resolve log_session_dir each call — it may have been
+                    # None at WS connect time if the display wasn't registered yet.
+                    current_log_dir = log_session_dir
+                    if not current_log_dir:
+                        try:
+                            display = manager.get_display(session_id)
+                            current_log_dir = getattr(display, "log_session_dir", None) if display else None
+                        except Exception:
+                            pass
+                    if not current_log_dir:
+                        try:
+                            from massgen.logger_config import get_log_session_dir
+
+                            current_log_dir = get_log_session_dir()
+                        except Exception:
+                            pass
+                    # Cache for future calls within this connection
+                    if current_log_dir and not log_session_dir:
+                        log_session_dir = current_log_dir
+
                     # Re-read status.json to get current workspace paths
-                    session_paths: list[str] = []
+                    status_data: dict[str, Any] | None = None
                     try:
-                        if log_session_dir:
-                            status_file = Path(log_session_dir) / "status.json"
+                        if current_log_dir:
+                            status_file = Path(current_log_dir) / "status.json"
                             if status_file.exists():
                                 with open(status_file) as f:
                                     status_data = json.load(f)
-                                agents_data = status_data.get("agents", {})
-                                for agent_id_key, agent_info in agents_data.items():
-                                    workspace_paths = agent_info.get("workspace_paths", {})
-                                    workspace_path = workspace_paths.get("workspace")
-                                    if workspace_path and Path(workspace_path).exists():
-                                        session_paths.append(workspace_path)
                     except Exception as e:
                         workspace_logger.warning(f"WS watch_session: failed to read status.json: {e}")
 
+                    resolved_workspaces = _resolve_watch_session_workspaces(
+                        status_data,
+                        Path(current_log_dir) if current_log_dir else None,
+                    )
+                    session_paths = [path for path, _ in resolved_workspaces]
+
                     # Collect initial files for each workspace
                     initial_files: dict[str, list[dict]] = {}
-                    for path in session_paths:
-                        workspace_path = Path(path)
-                        if workspace_path.exists() and workspace_path.is_dir():
-                            try:
-                                files = _scan_workspace_files(workspace_path)
-                                # Normalize path for consistent key format
-                                normalized_path = _normalize_workspace_path(path)
-                                initial_files[normalized_path] = files
-                                workspace_logger.debug(
-                                    f"WS watch_session: scanned {len(files)} files for {workspace_path.name}",
-                                )
-                            except Exception as e:
-                                workspace_logger.warning(f"WS watch_session: failed to scan {path}: {e}")
-                                # Use normalized path for error case too
-                                normalized_path = _normalize_workspace_path(path)
-                                initial_files[normalized_path] = []
+                    for path, files in resolved_workspaces:
+                        normalized_path = _normalize_workspace_path(path)
+                        initial_files[normalized_path] = files
+                        workspace_logger.debug(
+                            f"WS watch_session: scanned {len(files)} files for {Path(path).name}",
+                        )
 
                     # Normalize watched_paths for consistency
                     normalized_watched_paths = [_normalize_workspace_path(p) for p in session_paths]
@@ -4327,6 +4616,7 @@ async def run_coordination_with_history(
     session_log_dir: Path,
     turn_number: int,
     context_paths: list | None = None,
+    mode_overrides: dict | None = None,
 ) -> None:
     """Run coordination with conversation history from previous turns.
 
@@ -4342,6 +4632,7 @@ async def run_coordination_with_history(
         context_paths: Optional list of context paths from @path syntax
         session_log_dir: Path to the session log directory (e.g., .massgen/massgen_logs/log_xxx)
         turn_number: The turn number for this coordination (2, 3, etc.)
+        mode_overrides: Optional mode bar overrides from WebUI
     """
     import traceback
 
@@ -4419,6 +4710,9 @@ async def run_coordination_with_history(
             raise ValueError(f"Could not resolve config path: {config_path}")
 
         config, raw_config_for_metadata = load_config_file(str(resolved_path))
+
+        # Apply mode bar overrides from WebUI before any config processing
+        _apply_mode_overrides(config, mode_overrides)
 
         # Inject context paths from @path syntax if provided
         if context_paths:
@@ -4758,11 +5052,116 @@ async def run_coordination_with_history(
         )
 
 
+def _apply_agent_overrides(config: dict, overrides: dict) -> None:
+    """Apply agent-level overrides (count, model, backend) to config."""
+    agents = config.get("agents", [])
+
+    # Agent count adjustment
+    target_count = overrides.get("agent_count")
+    if target_count is not None and target_count != len(agents):
+        if target_count > len(agents):
+            # Add agents by cloning the last agent as template
+            template = (
+                agents[-1]
+                if agents
+                else {
+                    "backend": {"type": "chat_completions"},
+                    "backend_params": {"model": "gpt-4o"},
+                }
+            )
+            for i in range(len(agents), target_count):
+                import copy
+
+                new_agent = copy.deepcopy(template)
+                new_agent["id"] = f"agent_{chr(97 + i)}"
+                agents.append(new_agent)
+        else:
+            # Trim agents
+            agents[:] = agents[:target_count]
+        config["agents"] = agents
+
+    # Per-agent overrides (from WebUI per-agent chips)
+    agent_overrides_list = overrides.get("agent_overrides")
+    if agent_overrides_list:
+        for i, agent_override in enumerate(agent_overrides_list):
+            if i >= len(agents):
+                break
+            agent = agents[i]
+            if agent_override.get("model"):
+                agent.setdefault("backend_params", {})["model"] = agent_override["model"]
+            if agent_override.get("backend_type"):
+                agent.setdefault("backend", {})["type"] = agent_override["backend_type"]
+
+    # Legacy uniform model override — apply to all agents
+    model = overrides.get("agent_model")
+    if model:
+        for agent in config.get("agents", []):
+            agent.setdefault("backend_params", {})["model"] = model
+
+    # Legacy uniform backend override — apply to all agents
+    backend = overrides.get("agent_backend")
+    if backend:
+        for agent in config.get("agents", []):
+            agent.setdefault("backend", {})["type"] = backend
+
+
+def _apply_docker_override(config: dict, use_docker: bool) -> None:
+    """Toggle docker execution mode in config."""
+    config.setdefault("execution", {})["use_docker"] = use_docker
+
+
+def _apply_mode_overrides(config: dict, overrides: dict | None) -> None:
+    """Apply WebUI mode bar overrides to the loaded config dict."""
+    if not overrides:
+        return
+
+    orch = config.setdefault("orchestrator", {})
+
+    # Orchestrator-level overrides
+    orch_keys = (
+        "coordination_mode",
+        "max_new_answers_per_agent",
+        "skip_voting",
+        "skip_final_presentation",
+        "disable_injection",
+        "defer_voting_until_all_answered",
+        "final_answer_strategy",
+    )
+    for key in orch_keys:
+        if key in overrides:
+            orch[key] = overrides[key]
+
+    # Persona generator
+    if "persona_generator_enabled" in overrides:
+        coord = orch.setdefault("coordination", {})
+        pg = coord.setdefault("persona_generator", {})
+        pg["enabled"] = overrides["persona_generator_enabled"]
+        if "persona_diversity_mode" in overrides:
+            pg["diversity_mode"] = overrides["persona_diversity_mode"]
+
+    # Agent count + model/backend overrides
+    if any(
+        k in overrides
+        for k in (
+            "agent_count",
+            "agent_model",
+            "agent_backend",
+            "agent_overrides",
+        )
+    ):
+        _apply_agent_overrides(config, overrides)
+
+    # Docker toggle
+    if "docker_override" in overrides:
+        _apply_docker_override(config, overrides["docker_override"])
+
+
 async def run_coordination(
     session_id: str,
     question: str,
     config_path: str | None = None,
     context_paths: list | None = None,
+    mode_overrides: dict | None = None,
 ) -> None:
     """Run coordination with web display.
 
@@ -4771,6 +5170,7 @@ async def run_coordination(
         question: Question for coordination
         config_path: Optional path to config YAML
         context_paths: Optional list of context paths from @path syntax
+        mode_overrides: Optional mode bar overrides from WebUI
     """
     import traceback
 
@@ -4826,6 +5226,9 @@ async def run_coordination(
             raise ValueError(f"Could not resolve config path: {config_path}")
 
         config, raw_config_for_metadata = load_config_file(str(resolved_path))
+
+        # Apply mode bar overrides from WebUI before any config processing
+        _apply_mode_overrides(config, mode_overrides)
 
         # Inject context paths from @path syntax if provided
         if context_paths:
@@ -5280,7 +5683,7 @@ def run_temporary_quickstart_server(
         import time
         import webbrowser
 
-        browser_url = f"http://{host}:{port}/setup?temporary=1"
+        browser_url = f"http://{host}:{port}/?v=2&temporary=1&wizard=open"
 
         def open_browser() -> None:
             time.sleep(0.5)

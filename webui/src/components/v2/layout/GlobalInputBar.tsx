@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../../lib/utils';
 import { useAgentStore } from '../../../stores/agentStore';
 import { useMessageStore } from '../../../stores/v2/messageStore';
+import { useWizardStore } from '../../../stores/wizardStore';
+import { parseBroadcastTargets } from '../../../utils/broadcastTargets';
 import type { ConnectionStatus } from '../../../hooks/useWebSocket';
 import type { ConfigInfo } from '../../../types';
 import { ConfigViewerModal } from './ConfigViewerModal';
+import { AgentMentionAutocomplete, type AgentMentionAutocompleteHandle } from './AgentMentionAutocomplete';
 
 interface GlobalInputBarProps {
   wsStatus: ConnectionStatus;
@@ -16,6 +19,8 @@ interface GlobalInputBarProps {
   hasActiveSession: boolean;
   isComplete: boolean;
   isLaunching?: boolean;
+  broadcastMessage?: (message: string, targets: string[] | null) => void;
+  refreshTrigger?: number;
 }
 
 export function GlobalInputBar({
@@ -28,14 +33,36 @@ export function GlobalInputBar({
   hasActiveSession,
   isComplete,
   isLaunching,
+  broadcastMessage,
+  refreshTrigger,
 }: GlobalInputBarProps) {
   const [message, setMessage] = useState('');
   const [configs, setConfigs] = useState<ConfigInfo[]>([]);
   const [showConfigDropdown, setShowConfigDropdown] = useState(false);
   const [showConfigViewer, setShowConfigViewer] = useState(false);
   const [configViewPath, setConfigViewPath] = useState('');
+  const [broadcastSent, setBroadcastSent] = useState(false);
+  const [queuedBroadcast, setQueuedBroadcast] = useState<{
+    content: string;
+    targets: string[] | null;
+    timestamp: number;
+  } | null>(null);
+  const mentionRef = useRef<AgentMentionAutocompleteHandle>(null);
 
-  // Fetch available configs
+  // Clear queued broadcast when new agent activity arrives
+  const messageStoreMessages = useMessageStore((s) => s.messages);
+  const totalMessageCount = Object.values(messageStoreMessages).reduce(
+    (sum, msgs) => sum + msgs.length, 0
+  );
+  const lastCountRef = useRef(totalMessageCount);
+  useEffect(() => {
+    if (queuedBroadcast && totalMessageCount > lastCountRef.current) {
+      setQueuedBroadcast(null);
+    }
+    lastCountRef.current = totalMessageCount;
+  }, [totalMessageCount, queuedBroadcast]);
+
+  // Fetch available configs (re-fetch when refreshTrigger changes after wizard save)
   useEffect(() => {
     fetch('/api/configs')
       .then((res) => res.json())
@@ -47,7 +74,7 @@ export function GlobalInputBar({
         }
       })
       .catch(() => {});
-  }, []);
+  }, [refreshTrigger]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,8 +90,16 @@ export function GlobalInputBar({
       useMessageStore.getState().reset();
       useAgentStore.getState().beginLaunch(message.trim());
       startCoordination(message.trim(), selectedConfig || undefined);
+    } else if (hasActiveSession && !isComplete && broadcastMessage) {
+      // Active session, not complete — broadcast to agents
+      const { cleanMessage, targets } = parseBroadcastTargets(message);
+      broadcastMessage(cleanMessage, targets);
+      // Show queued banner until next agent activity
+      setQueuedBroadcast({ content: cleanMessage, targets, timestamp: Date.now() });
+      // Show brief "Sent" confirmation
+      setBroadcastSent(true);
+      setTimeout(() => setBroadcastSent(false), 2000);
     }
-    // If session active and not complete, this is a broadcast (TODO)
 
     setMessage('');
   };
@@ -88,8 +123,38 @@ export function GlobalInputBar({
     ? selectedConfig.split('/').pop()?.replace('.yaml', '') || 'config'
     : 'No config';
 
+  const targetLabel = queuedBroadcast?.targets
+    ? queuedBroadcast.targets.join(', ')
+    : 'all agents';
+
   return (
     <div className="border-t border-v2-border bg-v2-surface px-4 py-3">
+      {/* Queued broadcast banner */}
+      {queuedBroadcast && (
+        <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded bg-purple-500/5 border border-purple-500/20 animate-v2-fade-in">
+          <span className="text-purple-400 text-xs font-medium shrink-0">Queued:</span>
+          <span className="text-xs text-v2-text-secondary truncate">
+            {queuedBroadcast.content.length > 60
+              ? queuedBroadcast.content.slice(0, 60) + '...'
+              : queuedBroadcast.content}
+          </span>
+          <span className="text-[10px] text-purple-400/60 shrink-0">
+            &rarr; {targetLabel}
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setQueuedBroadcast(null)}
+            className="shrink-0 text-v2-text-muted hover:text-v2-text transition-colors"
+            title="Dismiss"
+          >
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M2 2l8 8M10 2l-8 8" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="flex items-center gap-3">
         {/* Config selector */}
         <div className="relative">
@@ -156,6 +221,26 @@ export function GlobalInputBar({
               {configs.length === 0 && (
                 <div className="px-3 py-2 text-xs text-v2-text-muted">No configs found</div>
               )}
+              {/* New Config button */}
+              <div className="border-t border-v2-border">
+                <button
+                  type="button"
+                  onClick={() => {
+                    useWizardStore.getState().openWizard();
+                    setShowConfigDropdown(false);
+                  }}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm',
+                    'text-v2-accent hover:bg-[var(--v2-channel-hover)]',
+                    'transition-colors duration-100'
+                  )}
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+                  </svg>
+                  New Config
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -171,10 +256,19 @@ export function GlobalInputBar({
 
         {/* Input */}
         <div className="flex-1 relative">
+          <AgentMentionAutocomplete
+            ref={mentionRef}
+            inputValue={message}
+            onSelect={(newValue) => setMessage(newValue)}
+            enabled={hasActiveSession && !isComplete}
+          />
           <input
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (mentionRef.current?.handleKeyDown(e)) return;
+            }}
             placeholder={placeholder}
             disabled={!isConnected || (!selectedConfig && !hasActiveSession) || !!isLaunching}
             className={cn(
@@ -205,24 +299,30 @@ export function GlobalInputBar({
         )}
 
         {/* Send / Launch button */}
-        <button
-          type="submit"
-          disabled={!canSend || !!isLaunching}
-          className={cn(
-            'rounded-v2-input px-4 py-2.5 text-sm font-medium',
-            'bg-v2-accent text-white',
-            'hover:bg-v2-accent-hover',
-            'disabled:opacity-40 disabled:cursor-not-allowed',
-            'transition-colors duration-150'
-          )}
-        >
-          {isLaunching ? (
-            <span className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-              Launching
-            </span>
-          ) : hasActiveSession && !isComplete ? 'Send' : isComplete ? 'Continue' : 'Start'}
-        </button>
+        {broadcastSent ? (
+          <span className="text-xs text-v2-online font-medium px-3 py-2.5 whitespace-nowrap">
+            Sent
+          </span>
+        ) : (
+          <button
+            type="submit"
+            disabled={!canSend || !!isLaunching}
+            className={cn(
+              'rounded-v2-input px-4 py-2.5 text-sm font-medium',
+              'bg-v2-accent text-white',
+              'hover:bg-v2-accent-hover',
+              'disabled:opacity-40 disabled:cursor-not-allowed',
+              'transition-colors duration-150'
+            )}
+          >
+            {isLaunching ? (
+              <span className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                Launching
+              </span>
+            ) : hasActiveSession && !isComplete ? 'Send' : isComplete ? 'Continue' : 'Start'}
+          </button>
+        )}
       </form>
 
       {/* Config Viewer Modal */}

@@ -9,9 +9,11 @@ import { SidebarFooter } from './SidebarFooter';
 interface SidebarProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
+  onSessionChange?: (sessionId: string) => void;
+  onNewSession?: () => void;
 }
 
-export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
+export function Sidebar({ collapsed, onToggleCollapse, onSessionChange, onNewSession }: SidebarProps) {
   return (
     <aside
       className={cn(
@@ -23,7 +25,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       <SidebarHeader collapsed={collapsed} onToggleCollapse={onToggleCollapse} />
 
       <div className="flex-1 overflow-y-auto v2-scrollbar px-2 py-1">
-        <SessionSection collapsed={collapsed} />
+        <SessionSection collapsed={collapsed} onSessionChange={onSessionChange} onNewSession={onNewSession} />
         <SidebarDivider />
         <ChannelSection collapsed={collapsed} />
         <SidebarDivider />
