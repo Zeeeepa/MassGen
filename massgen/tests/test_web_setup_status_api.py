@@ -73,12 +73,13 @@ def test_providers_endpoint_prioritizes_agent_frameworks_and_marks_them() -> Non
     payload = response.json()
     provider_ids = [provider["id"] for provider in payload["providers"]]
 
-    assert provider_ids[:3] == ["claude_code", "codex", "copilot"]
+    assert provider_ids[:4] == ["claude_code", "codex", "copilot", "gemini_cli"]
 
     providers_by_id = {provider["id"]: provider for provider in payload["providers"]}
     assert providers_by_id["claude_code"]["is_agent_framework"] is True
     assert providers_by_id["codex"]["is_agent_framework"] is True
     assert providers_by_id["copilot"]["is_agent_framework"] is True
+    assert providers_by_id["gemini_cli"]["is_agent_framework"] is True
     assert providers_by_id["openai"]["is_agent_framework"] is False
 
 

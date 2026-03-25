@@ -6,6 +6,7 @@ import { useThemeStore } from '../../../stores/themeStore';
 import { useTileStore } from '../../../stores/v2/tileStore';
 import { useWizardStore } from '../../../stores/wizardStore';
 import { useSetupStore } from '../../../stores/setupStore';
+import { useOnboardingStore } from '../../../stores/v2/onboardingStore';
 import { useV2KeyboardShortcuts } from '../../../hooks/useV2KeyboardShortcuts';
 import type { ConnectionStatus } from '../../../hooks/useWebSocket';
 import { useModeStore } from '../../../stores/v2/modeStore';
@@ -76,7 +77,11 @@ export function AppShell({
       return;
     }
     if (urlParams.get('wizard') === 'open') {
-      openWizard();
+      const isSkillOnboarding = urlParams.get('skill') === '1';
+      if (isSkillOnboarding) {
+        useOnboardingStore.getState().initFromUrl();
+      }
+      openWizard(isSkillOnboarding);
       return;
     }
 

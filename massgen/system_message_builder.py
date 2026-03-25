@@ -28,6 +28,7 @@ from massgen.system_prompt_sections import (
     FilesystemOperationsSection,
     GPT5GuidanceSection,
     GrokGuidanceSection,
+    MainAgentCheckpointSection,
     MemorySection,
     MultimodalToolsSection,
     NoveltyPressureSection,
@@ -603,6 +604,18 @@ class SystemMessageBuilder:
                     decomposition_mode=is_decomposition,
                     specialized_subagents=_tp_subagents,
                     checkpoint_mode=_checkpoint_enabled,
+                ),
+            )
+
+        # PRIORITY 10 (MEDIUM): Checkpoint Coordination (main agent only)
+        _checkpoint_enabled = hasattr(self.config, "coordination_config") and self.config.coordination_config and getattr(self.config.coordination_config, "checkpoint_enabled", False)
+        if _checkpoint_enabled:
+            _coord = self.config.coordination_config
+            builder.add_section(
+                MainAgentCheckpointSection(
+                    checkpoint_guidance=getattr(_coord, "checkpoint_guidance", ""),
+                    gated_patterns=getattr(_coord, "checkpoint_gated_patterns", []) or [],
+                    checkpoint_mode=getattr(_coord, "checkpoint_mode", "conversation"),
                 ),
             )
 

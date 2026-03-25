@@ -1609,6 +1609,9 @@ def create_app(
             elif backend_type == "codex":
                 # Codex always shows - works with OAuth (codex login) or OPENAI_API_KEY
                 has_api_key = True
+            elif backend_type == "gemini_cli":
+                # Gemini CLI always shows - works with `gemini` CLI login, GOOGLE_API_KEY, or GEMINI_API_KEY
+                has_api_key = True
             elif caps.env_var:
                 api_key = os.getenv(caps.env_var, "")
                 # Check it's not empty and not a placeholder from .env.example
@@ -6483,7 +6486,7 @@ def run_temporary_quickstart_server(
         import time
         import webbrowser
 
-        browser_url = f"http://{host}:{port}/?v=2&temporary=1&wizard=open"
+        browser_url = f"http://{host}:{port}/?v=2&temporary=1&wizard=open&skill=1"
 
         def open_browser() -> None:
             time.sleep(0.5)
