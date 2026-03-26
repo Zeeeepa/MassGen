@@ -10,6 +10,7 @@ import { useOnboardingStore } from '../../../stores/v2/onboardingStore';
 import { useV2KeyboardShortcuts } from '../../../hooks/useV2KeyboardShortcuts';
 import type { ConnectionStatus } from '../../../hooks/useWebSocket';
 import { useModeStore } from '../../../stores/v2/modeStore';
+import { useStatusStore } from '../../../stores/v2/statusStore';
 import { Sidebar } from '../sidebar/Sidebar';
 import { TileContainer } from '../tiles/TileContainer';
 import { GlobalInputBar } from './GlobalInputBar';
@@ -176,6 +177,22 @@ export function AppShell({
     }
     prevIsRunningRef.current = isRunning;
   }, [isRunning]);
+
+  // Status polling for cost/timing metrics
+  const sessionId = useAgentStore((s) => s.sessionId);
+  useEffect(() => {
+    if (sessionId && !isComplete) {
+      useStatusStore.getState().startPolling(sessionId);
+    } else if (isComplete && sessionId) {
+      // Final fetch then stop
+      useStatusStore.getState().fetchOnce(sessionId).then(() => {
+        useStatusStore.getState().stopPolling();
+      });
+    }
+    return () => {
+      useStatusStore.getState().stopPolling();
+    };
+  }, [sessionId, isComplete]);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-v2-main text-v2-text font-sans">

@@ -8,6 +8,7 @@ export type TileType =
   | 'timeline-view'
   | 'workspace-browser'
   | 'vote-results'
+  | 'answer-browser'
   | 'checkpoint-view';
 
 export interface TileState {

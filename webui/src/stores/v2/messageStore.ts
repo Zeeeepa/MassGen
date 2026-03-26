@@ -72,6 +72,7 @@ export interface AnswerMessage extends BaseMessage {
   answerLabel: string;
   answerNumber: number;
   contentPreview: string;
+  fullContent: string;
 }
 
 export interface VoteMessage extends BaseMessage {
@@ -550,6 +551,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
                 answerLabel,
                 answerNumber,
                 contentPreview,
+                fullContent: content,
               };
               set({
                 messages: { ...state.messages, [agentId]: [...existing, msg] },
@@ -745,6 +747,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
               answerLabel: label,
               answerNumber,
               contentPreview,
+              fullContent: content,
             };
             set({
               messages: { ...state.messages, [agentId]: [...existing, msg] },

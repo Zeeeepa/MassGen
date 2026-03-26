@@ -1,8 +1,8 @@
 import { useTileStore, type TileType } from '../../../stores/v2/tileStore';
 import { SidebarItem } from './SessionSection';
 
-/** The three workspace tile types — only one can be open at a time */
-const WORKSPACE_TILE_TYPES: TileType[] = ['workspace-browser', 'timeline-view', 'vote-results'];
+/** The workspace tile types — only one can be open at a time */
+const WORKSPACE_TILE_TYPES: TileType[] = ['workspace-browser', 'timeline-view', 'answer-browser', 'vote-results'];
 
 interface QuickAccessSectionProps {
   collapsed: boolean;
@@ -49,6 +49,13 @@ export function QuickAccessSection({ collapsed }: QuickAccessSectionProps) {
         />
         <SidebarItem
           collapsed={collapsed}
+          icon={<AnswerIcon />}
+          label="Answers"
+          active={openWorkspaceTile?.type === 'answer-browser'}
+          onClick={() => toggleTile('answer-browser', 'answer-browser', 'Answers', 'answers')}
+        />
+        <SidebarItem
+          collapsed={collapsed}
           icon={<TimelineIcon />}
           label="Timeline"
           active={openWorkspaceTile?.type === 'timeline-view'}
@@ -70,6 +77,14 @@ function FolderIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M2 4.5A1.5 1.5 0 013.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5V4.5z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AnswerIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="text-yellow-500/60">
+      <path d="M8 1l2.1 4.2L15 6l-3.5 3.4.8 4.8L8 12l-4.3 2.2.8-4.8L1 6l4.9-.8L8 1z" />
     </svg>
   );
 }

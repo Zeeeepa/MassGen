@@ -8,6 +8,7 @@ import { FileViewerTile } from './FileViewerTile';
 import { WorkspaceBrowserTile } from './WorkspaceBrowserTile';
 import { TimelineTile } from './TimelineTile';
 import { VoteResultsTile } from './VoteResultsTile';
+import { AnswerBrowserTile } from './AnswerBrowserTile';
 import { SubagentTile } from './SubagentTile';
 import { InlineArtifactPreview } from '../../InlineArtifactPreview';
 import { useWorkspaceStore } from '../../../stores/workspaceStore';
@@ -111,6 +112,8 @@ function TileContent({ tile }: { tile: TileState }) {
       return <WorkspaceBrowserTile />;
     case 'vote-results':
       return <VoteResultsTile />;
+    case 'answer-browser':
+      return <AnswerBrowserTile focusAnswerLabel={tile.targetId !== 'answers' ? tile.targetId : undefined} />;
     default:
       return null;
   }
@@ -149,6 +152,12 @@ function TileIcon({ type }: { type: TileState['type'] }) {
       return (
         <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
           <path d="M3 12V8M6.5 12V5M10 12V3M13.5 12V7" strokeLinecap="round" />
+        </svg>
+      );
+    case 'answer-browser':
+      return (
+        <svg className={className} viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 1l2.1 4.2L15 6l-3.5 3.4.8 4.8L8 12l-4.3 2.2.8-4.8L1 6l4.9-.8L8 1z" />
         </svg>
       );
     default:
