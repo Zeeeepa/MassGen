@@ -56,7 +56,7 @@ class TestChatCompletionsConfigPlumbing:
             llm_circuit_breaker_enabled=False,
             llm_circuit_breaker_max_failures=5,
         )
-        assert backend.circuit_breaker is not None
+        assert isinstance(backend.circuit_breaker, LLMCircuitBreaker)
 
     def test_cb_disabled_by_default(self):
         from massgen.backend.chat_completions import ChatCompletionsBackend
@@ -100,7 +100,7 @@ class TestResponseBackendConfigPlumbing:
             llm_circuit_breaker_enabled=False,
             llm_circuit_breaker_max_failures=5,
         )
-        assert backend.circuit_breaker is not None
+        assert isinstance(backend.circuit_breaker, LLMCircuitBreaker)
 
     def test_cb_disabled_by_default(self):
         from massgen.backend.response import ResponseBackend
@@ -144,7 +144,7 @@ class TestGeminiBackendConfigPlumbing:
             llm_circuit_breaker_enabled=False,
             llm_circuit_breaker_max_failures=5,
         )
-        assert backend.circuit_breaker is not None
+        assert isinstance(backend.circuit_breaker, LLMCircuitBreaker)
 
     def test_cb_disabled_by_default(self):
         from massgen.backend.gemini import GeminiBackend
@@ -314,7 +314,7 @@ class TestCallWithRetry429Classifications:
         assert result == "ok"
         assert call_count == 2
         # WAIT does not increment failure counter
-        assert cb._failure_count == 0
+        assert cb.failure_count == 0
 
     @pytest.mark.asyncio
     async def test_stop_long_retry_after_forces_cb_open(self):
@@ -348,7 +348,7 @@ class TestCallWithRetry429Classifications:
                 await cb.call_with_retry(api_call, max_retries=3)
 
         # 3 CAP failures recorded
-        assert cb._failure_count == 3
+        assert cb.failure_count == 3
 
     @pytest.mark.asyncio
     async def test_cap_retries_before_exhaustion(self):
@@ -370,7 +370,7 @@ class TestCallWithRetry429Classifications:
         assert result == "recovered"
         assert call_count == 2
         # record_success resets the counter
-        assert cb._failure_count == 0
+        assert cb.failure_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +384,7 @@ class TestGemini503Handling:
     def test_503_increments_failure_counter(self):
         cb = LLMCircuitBreaker(config=_enabled_config(max_failures=5))
         cb.record_failure("exhausted_503", "Service Unavailable")
-        assert cb._failure_count == 1
+        assert cb.failure_count == 1
         assert cb.state == CircuitState.CLOSED
 
     def test_503_repeated_failures_open_cb(self):
@@ -410,7 +410,7 @@ class TestGemini503Handling:
             with pytest.raises(FakeAPIError):
                 await cb.call_with_retry(api_call, max_retries=2)
 
-        assert cb._failure_count == 2
+        assert cb.failure_count == 2
 
     def test_503_does_not_increment_when_disabled(self):
         """When CB is disabled, record_failure is a no-op."""
@@ -476,3 +476,53 @@ class TestCBConfigValidation:
                 llm_circuit_breaker_enabled=True,
                 llm_circuit_breaker_reset_time_seconds=0,
             )
+
+
+# ---------------------------------------------------------------------------
+# Integration: CB OPEN raises CircuitBreakerOpenError through backend
+# ---------------------------------------------------------------------------
+
+
+class TestCBOpenRaisesErrorThroughBackend:
+    """When CB is OPEN, backend API calls raise CircuitBreakerOpenError."""
+
+    def test_chatcompletions_raises_when_cb_open(self):
+        from massgen.backend.chat_completions import ChatCompletionsBackend
+        from massgen.backend.llm_circuit_breaker import CircuitBreakerOpenError
+
+        backend = ChatCompletionsBackend(
+            llm_circuit_breaker_enabled=True,
+            llm_circuit_breaker_max_failures=1,
+        )
+        # Force CB open
+        backend.circuit_breaker.record_failure("test", "force open")
+        assert backend.circuit_breaker.state == CircuitState.OPEN
+        assert backend.circuit_breaker.should_block() is True
+
+        # call_with_retry should raise immediately
+        async def _dummy():
+            return "should not reach"
+
+        with pytest.raises(CircuitBreakerOpenError):
+            import asyncio
+
+            asyncio.get_event_loop().run_until_complete(
+                backend.circuit_breaker.call_with_retry(_dummy),
+            )
+
+    def test_gemini_raises_when_cb_open(self):
+        """Gemini uses should_block() gate, not call_with_retry."""
+        from massgen.backend.gemini import GeminiBackend
+        from massgen.backend.llm_circuit_breaker import CircuitBreakerOpenError
+
+        backend = GeminiBackend(
+            llm_circuit_breaker_enabled=True,
+            llm_circuit_breaker_max_failures=1,
+        )
+        backend.circuit_breaker.record_failure("test", "force open")
+        assert backend.circuit_breaker.state == CircuitState.OPEN
+        assert backend.circuit_breaker.should_block() is True
+
+        # Verify the error message format (single string, not tuple)
+        with pytest.raises(CircuitBreakerOpenError, match="Circuit breaker is open for gemini"):
+            raise CircuitBreakerOpenError("Circuit breaker is open for gemini")

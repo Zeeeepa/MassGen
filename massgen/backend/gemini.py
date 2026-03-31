@@ -811,7 +811,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
             # Circuit breaker gate
             if self.circuit_breaker.should_block():
-                raise CircuitBreakerOpenError("gemini", "Circuit breaker is open")
+                raise CircuitBreakerOpenError("Circuit breaker is open for gemini")
 
             first_token_recorded = False
             for stream_attempt in range(1, cfg.max_attempts + 1):
@@ -1486,7 +1486,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     # Retry for continuation with backoff
                     # Circuit breaker gate
                     if self.circuit_breaker.should_block():
-                        raise CircuitBreakerOpenError("gemini", "Circuit breaker is open")
+                        raise CircuitBreakerOpenError("Circuit breaker is open for gemini")
 
                     for cont_attempt in range(1, cfg.max_attempts + 1):
                         try:
