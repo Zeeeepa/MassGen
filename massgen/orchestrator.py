@@ -12681,6 +12681,97 @@ Your answer:"""
         frontmatter = "---\n" f"name: execution_trace_round_{round_number}\n" f"description: Process learnings from round {round_number}" " execution trace analysis\n" "tier: short_term\n" "---\n"
         return f"{frontmatter}\n{report_text}"
 
+    @staticmethod
+    def _get_trace_analysis_memory_filename(round_number: int) -> str:
+        """Return the canonical short-term memory filename for trace analysis."""
+        return f"trace_analysis_round_{round_number}.md"
+
+    @classmethod
+    def _candidate_trace_analysis_artifact_paths(
+        cls,
+        workspace_path: str | os.PathLike[str] | None,
+        round_number: int,
+    ) -> list[Path]:
+        """Return likely locations for the analyzer's authoritative memory artifact."""
+        if not workspace_path:
+            return []
+
+        filename = cls._get_trace_analysis_memory_filename(round_number)
+        workspace = Path(workspace_path)
+        candidates: list[tuple[int, float, Path]] = []
+        seen: set[str] = set()
+
+        def _add(path: Path, priority: int) -> None:
+            if not path.exists() or not path.is_file():
+                return
+            try:
+                key = str(path.resolve())
+            except OSError:
+                key = str(path)
+            if key in seen:
+                return
+            seen.add(key)
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append((priority, -mtime, path))
+
+        _add(workspace / "deliverable" / filename, priority=0)
+        _add(workspace / filename, priority=5)
+
+        for pattern, priority in (
+            (f"agent_*/deliverable/{filename}", 10),
+            (f"agent_*/{filename}", 15),
+            (f".massgen/sessions/*/turn_*/workspace/deliverable/{filename}", 20),
+            (f".massgen/sessions/*/turn_*/workspace/{filename}", 25),
+            (f".massgen/massgen_logs/*/turn_*/final/*/workspace/deliverable/{filename}", 30),
+            (f".massgen/massgen_logs/*/turn_*/final/*/workspace/{filename}", 35),
+        ):
+            for candidate in workspace.glob(pattern):
+                _add(candidate, priority=priority)
+
+        candidates.sort(key=lambda item: (item[0], item[1], str(item[2])))
+        return [path for _, _, path in candidates]
+
+    @classmethod
+    def _resolve_trace_analysis_artifact_path(
+        cls,
+        workspace_path: str | os.PathLike[str] | None,
+        round_number: int,
+    ) -> Path | None:
+        """Return the first non-empty trace-analysis artifact with memory frontmatter."""
+        for candidate in cls._candidate_trace_analysis_artifact_paths(
+            workspace_path=workspace_path,
+            round_number=round_number,
+        ):
+            try:
+                content = candidate.read_text(encoding="utf-8")
+            except OSError as exc:
+                logger.warning(
+                    "[Orchestrator] Failed to read trace analysis artifact %s: %s",
+                    candidate,
+                    exc,
+                )
+                continue
+
+            stripped = content.strip()
+            if not stripped:
+                logger.warning(
+                    "[Orchestrator] Trace analysis artifact is empty at %s",
+                    candidate,
+                )
+                continue
+            if not stripped.startswith("---") or "tier: short_term" not in content or "name:" not in content:
+                logger.warning(
+                    "[Orchestrator] Trace analysis artifact at %s is missing required memory frontmatter",
+                    candidate,
+                )
+                continue
+            return candidate
+
+        return None
+
     # ------------------------------------------------------------------
     # Auto trace analysis (background execution_trace_analyzer)
     # ------------------------------------------------------------------
@@ -12782,6 +12873,9 @@ Your answer:"""
     ) -> str:
         """Build the task string for the execution_trace_analyzer subagent."""
         original_task = getattr(self, "_original_task", None) or getattr(self, "current_task", None) or "Task coordination"
+        memory_filename = self._get_trace_analysis_memory_filename(round_number)
+        memory_artifact_path = f"deliverable/{memory_filename}"
+        frontmatter = "---\n" f"name: execution_trace_round_{round_number}\n" f"description: Process learnings from round {round_number} execution trace analysis\n" "tier: short_term\n" "---"
         return (
             f"Analyze the execution trace from round {round_number - 1} "
             "and extract specific DO/DON'T guidance about the agent's "
@@ -12794,9 +12888,30 @@ Your answer:"""
             "quality (that is the round_evaluator's job). Focus on "
             "behavioral patterns that cost time or led the agent in "
             "wrong directions.\n\n"
-            "Write your analysis directly in your answer text using "
-            "the DO / DON'T / CRITICAL ERRORS format from your "
-            "instructions."
+            "Authoritative output contract:\n"
+            f"1. If `deliverable/` does not exist in your workspace, create it.\n"
+            f"2. Write the final memory artifact to `{memory_artifact_path}`.\n"
+            "3. That file will be copied directly into the parent agent's "
+            "`memory/short_term/`, so it must already contain valid YAML "
+            "frontmatter exactly like this:\n"
+            f"{frontmatter}\n\n"
+            "4. After writing the file, keep your answer text brief: say "
+            "whether you created the file and state its path. Do not paste "
+            "the full report into the answer.\n\n"
+            "Criticality rules:\n"
+            "- Be skeptical. Bias toward DON'T / CRITICAL ERRORS unless the "
+            "trace clearly proves a behavior helped.\n"
+            "- Only put an item in `DO` when the trace shows direct evidence "
+            "that it worked (for example: successful verification, later reuse "
+            "without rollback, or avoided repeated failure).\n"
+            "- If an action was merely attempted, completed once without proof, "
+            "or only seems plausible, Do NOT promote it to `DO`.\n"
+            "- If nothing is confidently confirmed, say so explicitly under "
+            "`DO` instead of inventing a positive.\n"
+            "- Every item must cite specific trace evidence: tool names, file "
+            "paths, repeated commands, or exact error messages.\n\n"
+            "Use the DO / DON'T / CRITICAL ERRORS section format from your "
+            "instructions inside the artifact."
         )
 
     def _write_trace_analysis_to_memory(
@@ -12817,7 +12932,7 @@ Your answer:"""
             memory_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             return
-        target = memory_dir / f"trace_analysis_round_{round_number}.md"
+        target = memory_dir / self._get_trace_analysis_memory_filename(round_number)
         try:
             target.write_text(memory_block, encoding="utf-8")
             logger.info(
@@ -12827,6 +12942,43 @@ Your answer:"""
             )
         except OSError as exc:
             logger.warning("[Orchestrator] Failed to write trace analysis memory: %s", exc)
+
+    def _copy_trace_analysis_artifact_to_memory(
+        self,
+        agent_id: str,
+        round_number: int,
+        source_path: Path,
+    ) -> None:
+        """Copy the authoritative trace-analysis artifact into short-term memory."""
+        agent = self.agents.get(agent_id)
+        if not agent:
+            return
+        fs_mgr = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
+        if not fs_mgr or not fs_mgr.cwd:
+            return
+        memory_dir = fs_mgr.cwd / "memory" / "short_term"
+        try:
+            memory_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+
+        target = memory_dir / self._get_trace_analysis_memory_filename(round_number)
+        try:
+            if source_path.resolve() == target.resolve():
+                return
+        except OSError:
+            pass
+
+        try:
+            shutil.copy2(source_path, target)
+            logger.info(
+                "[Orchestrator] Copied trace analysis artifact %s to %s for %s",
+                source_path,
+                target,
+                agent_id,
+            )
+        except OSError as exc:
+            logger.warning("[Orchestrator] Failed to copy trace analysis artifact to memory: %s", exc)
 
     async def _run_trace_analyzer(
         self,
@@ -12938,17 +13090,32 @@ Your answer:"""
             )
             return
 
-        # Write to memory (short_term)
-        memory_block = self._format_trace_analyzer_for_memory_static(
-            trace_result,
-            round_number,
+        artifact_path = self._resolve_trace_analysis_artifact_path(
+            workspace_path=trace_result.workspace_path,
+            round_number=round_number,
         )
-        if memory_block:
-            self._write_trace_analysis_to_memory(
+        if artifact_path:
+            self._copy_trace_analysis_artifact_to_memory(
                 parent_agent_id,
                 round_number,
-                memory_block,
+                artifact_path,
             )
+        else:
+            logger.warning(
+                "[Orchestrator] Trace analyzer for %s r%d produced no authoritative artifact; " "falling back to answer text for memory persistence",
+                parent_agent_id,
+                round_number,
+            )
+            memory_block = self._format_trace_analyzer_for_memory_static(
+                trace_result,
+                round_number,
+            )
+            if memory_block:
+                self._write_trace_analysis_to_memory(
+                    parent_agent_id,
+                    round_number,
+                    memory_block,
+                )
 
         # Enqueue for SubagentCompleteHook injection
         if trace_result.answer and trace_result.answer.strip():

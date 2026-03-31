@@ -293,6 +293,97 @@ def test_build_task_includes_trace_path(tmp_path: Path):
     assert "/snapshots/execution_trace.md" in task  # trace path
     assert "round 1" in task  # round_number - 1
     assert "DO / DON'T / CRITICAL ERRORS" in task
+    assert "deliverable/trace_analysis_round_2.md" in task
+    assert "copied directly into the parent agent's `memory/short_term/`" in task
+    assert "Do NOT promote it to `DO`" in task
+
+
+@pytest.mark.asyncio
+async def test_run_trace_analyzer_copies_authoritative_artifact_to_memory(
+    tmp_path: Path,
+):
+    """The analyzer's deliverable file should be copied into short-term memory unchanged."""
+    from massgen.subagent.models import SubagentResult
+
+    orch = _make_orchestrator(tmp_path, restart_count=1)
+    orch._emit_round_evaluator_spawn_event = lambda **kwargs: None
+    orch._on_background_subagent_complete = lambda *args, **kwargs: None
+
+    trace_path = tmp_path / "execution_trace.md"
+    trace_path.write_text("# Trace", encoding="utf-8")
+
+    subagent_workspace = tmp_path / "subagent_workspace"
+    deliverable_dir = subagent_workspace / "deliverable"
+    deliverable_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = deliverable_dir / "trace_analysis_round_2.md"
+    artifact_text = (
+        "---\n"
+        "name: execution_trace_round_2\n"
+        "description: Process learnings from round 2 execution trace analysis\n"
+        "tier: short_term\n"
+        "---\n\n"
+        "### DO (repeat only if clearly confirmed)\n"
+        "- Use `rg` first when the trace shows it found the target quickly.\n\n"
+        "### DON'T (avoid these)\n"
+        "- Re-read the same file after nothing changed.\n"
+    )
+    artifact_path.write_text(artifact_text, encoding="utf-8")
+
+    async def _fake_direct_spawn(*args, **kwargs):
+        result = SubagentResult.create_success(
+            subagent_id="trace_analyzer_agent_a_r2",
+            answer="Created deliverable/trace_analysis_round_2.md",
+            workspace_path=str(subagent_workspace),
+            execution_time_seconds=1.0,
+        )
+        return {"success": True, "results": [result.to_dict()]}
+
+    orch._direct_spawn_subagents = _fake_direct_spawn  # type: ignore[assignment]
+
+    await orch._run_trace_analyzer("agent_a", 2, trace_path)
+
+    fs_mgr = orch.agents["agent_a"].backend.filesystem_manager
+    target = fs_mgr.cwd / "memory" / "short_term" / "trace_analysis_round_2.md"
+    assert target.exists()
+    assert target.read_text(encoding="utf-8") == artifact_text
+
+
+@pytest.mark.asyncio
+async def test_run_trace_analyzer_falls_back_to_answer_when_artifact_missing(
+    tmp_path: Path,
+):
+    """Missing artifact should degrade to the legacy answer-to-memory path."""
+    from massgen.subagent.models import SubagentResult
+
+    orch = _make_orchestrator(tmp_path, restart_count=1)
+    orch._emit_round_evaluator_spawn_event = lambda **kwargs: None
+    orch._on_background_subagent_complete = lambda *args, **kwargs: None
+
+    trace_path = tmp_path / "execution_trace.md"
+    trace_path.write_text("# Trace", encoding="utf-8")
+
+    subagent_workspace = tmp_path / "subagent_workspace"
+    subagent_workspace.mkdir(parents=True, exist_ok=True)
+
+    async def _fake_direct_spawn(*args, **kwargs):
+        result = SubagentResult.create_success(
+            subagent_id="trace_analyzer_agent_a_r2",
+            answer="### DON'T\n- Repeated the same failing command twice.",
+            workspace_path=str(subagent_workspace),
+            execution_time_seconds=1.0,
+        )
+        return {"success": True, "results": [result.to_dict()]}
+
+    orch._direct_spawn_subagents = _fake_direct_spawn  # type: ignore[assignment]
+
+    await orch._run_trace_analyzer("agent_a", 2, trace_path)
+
+    fs_mgr = orch.agents["agent_a"].backend.filesystem_manager
+    target = fs_mgr.cwd / "memory" / "short_term" / "trace_analysis_round_2.md"
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    assert "name: execution_trace_round_2" in content
+    assert "### DON'T" in content
 
 
 # ---------------------------------------------------------------------------
