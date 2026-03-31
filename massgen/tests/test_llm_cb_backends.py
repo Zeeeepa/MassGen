@@ -265,6 +265,7 @@ class TestDisabledBypassViaBackend:
         for _ in range(100):
             cb.record_failure()
         assert cb.should_block() is False
+        assert cb.failure_count == 0
 
     def test_response_disabled_never_blocks(self):
         from massgen.backend.response import ResponseBackend
@@ -274,6 +275,7 @@ class TestDisabledBypassViaBackend:
         for _ in range(100):
             cb.record_failure()
         assert cb.should_block() is False
+        assert cb.failure_count == 0
 
     def test_gemini_disabled_never_blocks(self):
         from massgen.backend.gemini import GeminiBackend
@@ -283,6 +285,7 @@ class TestDisabledBypassViaBackend:
         for _ in range(100):
             cb.record_failure()
         assert cb.should_block() is False
+        assert cb.failure_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +315,8 @@ class TestCallWithRetry429Classifications:
 
         assert result == "ok"
         assert call_count == 2
+        # WAIT honors Retry-After value
+        mock_sleep.assert_awaited_once_with(10)
         # WAIT does not increment failure counter
         assert cb.failure_count == 0
 
