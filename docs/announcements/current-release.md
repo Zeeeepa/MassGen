@@ -51,7 +51,7 @@ We're excited to release MassGen v0.1.71 â€” Trace Memory & Evaluation Polish! ð
 
 ```bash
 pip install massgen==0.1.71
-uv run massgen --web
+uv run massgen --config @examples/features/trace_analyzer_background.yaml "Create an svg of an AI agent coding."
 ```
 
 Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.71

@@ -168,7 +168,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **Try v0.1.71 Features:**
 ```bash
 pip install massgen==0.1.71
-uv run massgen --web
+uv run massgen --config @examples/features/trace_analyzer_background.yaml "Create an svg of an AI agent coding."
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)

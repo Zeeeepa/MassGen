@@ -23,5 +23,5 @@
 - **Try It**:
   ```bash
   pip install massgen==0.1.71
-  uv run massgen --web
+  uv run massgen --config @examples/features/trace_analyzer_background.yaml "Create an svg of an AI agent coding."
   ```
