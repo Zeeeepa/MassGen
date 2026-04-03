@@ -200,9 +200,9 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.72 (April 3, 2026)** - Circuit Breaker Phase 2 & Grok Backend Update
+**v0.1.72 (April 3, 2026)** - Grok Backend Update & Circuit Breaker Phase 2
 
-LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only). Grok backend update. Config plumbing smoke tests for all backends.
+Grok backend update with latest improvements. LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only). Config plumbing smoke tests for all backends.
 
 **v0.1.71 (April 1, 2026)** - Trace Memory & Evaluation Polish
 

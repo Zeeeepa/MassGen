@@ -50,13 +50,13 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## ✅ v0.1.72 - Circuit Breaker Phase 2 & Grok Backend Update (Completed)
+## ✅ v0.1.72 - Grok Backend Update & Circuit Breaker Phase 2 (Completed)
 
 **Released:** April 3, 2026 | PRs: [#1038](https://github.com/massgen/MassGen/pull/1038), [#1044](https://github.com/massgen/MassGen/pull/1044)
 
 ### Features
-- **Circuit Breaker Phase 2**: LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only); Gemini also handles 503
 - **Grok Backend Update**: Updated Grok backend with latest improvements
+- **Circuit Breaker Phase 2**: LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only); Gemini also handles 503
 - **Config Plumbing Smoke Tests**: Verify circuit breaker wiring for all backends
 
 ---

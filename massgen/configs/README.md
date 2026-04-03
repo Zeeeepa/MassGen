@@ -228,17 +228,17 @@ Most configurations use environment variables for API keys:so
 ## Release History & Examples
 
 ### v0.1.72 - Latest
-**New Features:** Circuit Breaker Phase 2 & Grok Backend Update
+**New Features:** Grok Backend Update & Circuit Breaker Phase 2
 
 **Key Features:**
-- **Circuit Breaker Phase 2**: LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only)
 - **Grok Backend Update**: Updated Grok backend with latest improvements
+- **Circuit Breaker Phase 2**: LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only)
 - **Config Plumbing Smoke Tests**: Verify circuit breaker wiring for all backends
 
 **Try It:**
 ```bash
 pip install massgen==0.1.72
-uv run massgen --config @examples/providers/others/grok_single_agent "List today's news in Seattle"
+uv run massgen --config @examples/providers/others/grok_x_search.yaml "Research the latest posts and news about AI agents in the last week, and summarize the key trends and insights."
 ```
 
 ### v0.1.71

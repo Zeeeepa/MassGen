@@ -160,14 +160,14 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: April 3, 2026**
 
 **What's New in v0.1.72:**
-- **⚡ Circuit Breaker Phase 2** - LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only).
 - **🦎 Grok Backend Update** - Updated Grok backend with latest improvements.
+- **⚡ Circuit Breaker Phase 2** - LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only).
 - **🧪 Config Plumbing Smoke Tests** - Verify circuit breaker wiring for all backends.
 
 **Try v0.1.72 Features:**
 ```bash
 pip install massgen==0.1.72
-uv run massgen --config @examples/providers/others/grok_single_agent "List today's news in Seattle"
+uv run massgen --config @examples/providers/others/grok_x_search.yaml "Research the latest posts and news about AI agents in the last week, and summarize the key trends and insights."
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1243,9 +1243,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 **🎉 Released: April 3, 2026**
 
-#### Circuit Breaker Phase 2 & Grok Backend Update
-- **Circuit Breaker Phase 2** ([#1038](https://github.com/massgen/MassGen/pull/1038)): LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only); Gemini also handles 503
+#### Grok Backend Update & Circuit Breaker Phase 2
 - **Grok Backend Update** ([#1044](https://github.com/massgen/MassGen/pull/1044)): Updated Grok backend with latest improvements
+- **Circuit Breaker Phase 2** ([#1038](https://github.com/massgen/MassGen/pull/1038)): LLM API circuit breaker extended to ChatCompletions, Response API, and Gemini backends (was Claude-only); Gemini also handles 503
 - **Config Plumbing Smoke Tests** ([#1038](https://github.com/massgen/MassGen/pull/1038)): Verify circuit breaker wiring for all backends
 
 ### Previous Achievements (v0.0.3 - v0.1.71)
