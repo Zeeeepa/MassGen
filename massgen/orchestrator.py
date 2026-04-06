@@ -13526,7 +13526,7 @@ Your answer:"""
                 verdict = entry.get("verdict", "?")
                 total = entry.get("total_score", "?")
                 items = entry.get("items_detail") or []
-                per_item = ", ".join(f"{it.get('id','?')}={it.get('score','?')}" for it in items)
+                per_item = ", ".join(f"{it.get('id', '?')}={it.get('score', '?')}" for it in items)
                 lines.append(f"  Round {round_idx}: verdict={verdict}, total={total}, scores=[{per_item}]")
         return "\n".join(lines)
 
