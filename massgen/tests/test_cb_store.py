@@ -123,10 +123,7 @@ class TestInMemoryStoreThreadSafety:
     def test_concurrent_increment_failure_100_threads(self):
         store = InMemoryStore()
 
-        threads = [
-            threading.Thread(target=store.increment_failure, args=("claude",))
-            for _ in range(100)
-        ]
+        threads = [threading.Thread(target=store.increment_failure, args=("claude",)) for _ in range(100)]
         for thread in threads:
             thread.start()
         for thread in threads:

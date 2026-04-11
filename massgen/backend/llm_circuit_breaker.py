@@ -91,8 +91,7 @@ class LLMCircuitBreakerConfig:
             )
         if self.retry_after_threshold_seconds < 0:
             raise ValueError(
-                "retry_after_threshold_seconds must be >= 0, "
-                f"got {self.retry_after_threshold_seconds}",
+                "retry_after_threshold_seconds must be >= 0, " f"got {self.retry_after_threshold_seconds}",
             )
 
 
@@ -522,7 +521,8 @@ class LLMCircuitBreaker:
         """Reset circuit breaker to initial CLOSED state."""
         if self._store is not None:
             prev_state_value = self._store.get_state(self.backend_name).get(
-                "state", CircuitState.CLOSED.value
+                "state",
+                CircuitState.CLOSED.value,
             )
             self._store.set_state(
                 self.backend_name,
@@ -613,8 +613,7 @@ class LLMCircuitBreaker:
                     if self._metrics is not None:
                         self._safe_emit(self._metrics.record_request, self.backend_name, outcome, 0.0)
                     raise CircuitBreakerOpenError(
-                        f"Circuit breaker became {state_label} during retries "
-                        f"for {self.backend_name}",
+                        f"Circuit breaker became {state_label} during retries " f"for {self.backend_name}",
                     )
 
                 if attempt > 1 and not _owns_probe:
@@ -647,9 +646,7 @@ class LLMCircuitBreaker:
                         if action == RateLimitAction.STOP:
                             # Quota exhaustion -- open CB for full Retry-After window
                             self.force_open(
-                                f"429 STOP: Retry-After={retry_after}s > "
-                                "threshold="
-                                f"{self.config.retry_after_threshold_seconds}s",
+                                f"429 STOP: Retry-After={retry_after}s > " "threshold=" f"{self.config.retry_after_threshold_seconds}s",
                                 open_for_seconds=retry_after or 0,
                             )
                             if self._metrics is not None:
@@ -662,9 +659,7 @@ class LLMCircuitBreaker:
                                 self._safe_emit(self._metrics.record_request, self.backend_name, "failure", _latency)
                             if attempt >= max_retries:
                                 raise
-                            wait_seconds = (
-                                retry_after if retry_after is not None else 1.0
-                            )
+                            wait_seconds = retry_after if retry_after is not None else 1.0
                             self._log(
                                 "429 WAIT: retrying after Retry-After",
                                 retry_after=wait_seconds,
@@ -744,15 +739,11 @@ class LLMCircuitBreaker:
             if _owns_probe:
                 if self._store is not None:
                     state = self._store.get_state(self.backend_name)
-                    if (
-                        CircuitState(state["state"]) == CircuitState.HALF_OPEN
-                        and state["half_open_probe_active"]
-                    ):
+                    if CircuitState(state["state"]) == CircuitState.HALF_OPEN and state["half_open_probe_active"]:
                         state.update(
                             {
                                 "state": CircuitState.OPEN.value,
-                                "open_until": time.monotonic()
-                                + self.config.reset_time_seconds,
+                                "open_until": time.monotonic() + self.config.reset_time_seconds,
                                 "half_open_probe_active": False,
                             },
                         )
@@ -798,9 +789,7 @@ class LLMCircuitBreaker:
 
     def _log(self, message: str, **details: Any) -> None:
         """Log via structured backend activity logger."""
-        log_details: dict[str, Any] = {
-            k: v for k, v in details.items() if v is not None
-        }
+        log_details: dict[str, Any] = {k: v for k, v in details.items() if v is not None}
         log_backend_activity(
             self.backend_name,
             message,
@@ -812,19 +801,11 @@ class LLMCircuitBreaker:
         if self._store is not None:
             state = self.state.value
             failures = self.failure_count
-            return (
-                f"LLMCircuitBreaker(state={state}, "
-                f"failures={failures}/{self.config.max_failures}, "
-                f"backend={self.backend_name!r})"
-            )
+            return f"LLMCircuitBreaker(state={state}, " f"failures={failures}/{self.config.max_failures}, " f"backend={self.backend_name!r})"
         with self._lock:
             state = self._state.value
             failures = self._failure_count
-        return (
-            f"LLMCircuitBreaker(state={state}, "
-            f"failures={failures}/{self.config.max_failures}, "
-            f"backend={self.backend_name!r})"
-        )
+        return f"LLMCircuitBreaker(state={state}, " f"failures={failures}/{self.config.max_failures}, " f"backend={self.backend_name!r})"
 
 
 # ---------------------------------------------------------------------------

@@ -124,10 +124,7 @@ class TestAdversarialInMemoryStoreConcurrency:
     def test_concurrent_increment_failure_100_threads(self) -> None:
         store = InMemoryStore()
 
-        threads = [
-            threading.Thread(target=store.increment_failure, args=("backend",))
-            for _ in range(100)
-        ]
+        threads = [threading.Thread(target=store.increment_failure, args=("backend",)) for _ in range(100)]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -171,14 +168,8 @@ class TestAdversarialInMemoryStoreConcurrency:
                 with exception_lock:
                     exceptions.append(exc)
 
-        threads = [
-            threading.Thread(target=run_safely, args=(store.increment_failure,))
-            for _ in range(50)
-        ]
-        threads.extend(
-            threading.Thread(target=run_safely, args=(store.clear,))
-            for _ in range(50)
-        )
+        threads = [threading.Thread(target=run_safely, args=(store.increment_failure,)) for _ in range(50)]
+        threads.extend(threading.Thread(target=run_safely, args=(store.clear,)) for _ in range(50))
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -314,10 +305,7 @@ class TestAdversarialRedisStore:
 
         with pytest.raises(
             RuntimeError,
-            match=(
-                "Failed to atomically increment failure count for 'backend' "
-                "after 3 retries"
-            ),
+            match=("Failed to atomically increment failure count for 'backend' " "after 3 retries"),
         ):
             store.increment_failure("backend")
 
@@ -779,10 +767,7 @@ class TestConcurrentLinearizability:
             )
             for _ in range(failure_count)
         ]
-        threads.extend(
-            threading.Thread(target=store.atomic_record_success, args=("claude",))
-            for _ in range(success_count)
-        )
+        threads.extend(threading.Thread(target=store.atomic_record_success, args=("claude",)) for _ in range(success_count))
 
         for thread in threads:
             thread.start()
