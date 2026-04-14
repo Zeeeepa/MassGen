@@ -186,6 +186,9 @@ class InMemoryStore:
                 state["state"] = "open"
                 state["open_until"] = now + recovery_timeout
                 state["half_open_probe_active"] = False
+            elif state["state"] == "open":
+                current_open_until = float(state.get("open_until", 0))
+                state["open_until"] = max(current_open_until, now + recovery_timeout)
 
             self._storage[backend] = state
             result = copy.deepcopy(state)
@@ -358,6 +361,9 @@ elseif state["state"] == "closed" and failure_count >= failure_threshold then
     state["state"] = "open"
     state["open_until"] = tostring(now + recovery_timeout)
     state["half_open_probe_active"] = "False"
+elseif state["state"] == "open" then
+    local current_open_until = tonumber(state["open_until"]) or 0
+    state["open_until"] = tostring(math.max(current_open_until, now + recovery_timeout))
 end
 
 redis.call(
@@ -766,7 +772,7 @@ return {
         pairs = list(raw_pairs)
         if len(pairs) % 2 != 0:
             raise ValueError("Redis circuit breaker script returned uneven field pairs")
-        return self._state_from_items(zip(pairs[0::2], pairs[1::2]))
+        return self._state_from_items(zip(pairs[0::2], pairs[1::2], strict=True))
 
     def _state_to_mapping(self, state: dict) -> dict:
         return {field: self._to_redis_value(state[field]) for field in DEFAULT_CIRCUIT_BREAKER_STATE}
@@ -884,6 +890,9 @@ return {
                         state["state"] = "open"
                         state["open_until"] = now + recovery_timeout
                         state["half_open_probe_active"] = False
+                    elif state["state"] == "open":
+                        current_open_until = float(state.get("open_until", 0))
+                        state["open_until"] = max(current_open_until, now + recovery_timeout)
 
                     pipe.multi()
                     pipe.hset(key, mapping=self._state_to_mapping(state))

@@ -500,20 +500,12 @@ class LLMCircuitBreaker:
                     break
                 # CAS conflict -- retry with refreshed state
             else:
-                # All CAS attempts failed; fall back to unconditional set to
-                # avoid leaving the CB in a non-open state under quota exhaustion.
-                current = self._store.get_state(self.backend_name)
-                merged_open_until = max(computed_open_until, float(current.get("open_until", 0)))
-                merged_last_failure = max(now, float(current.get("last_failure_time", 0)))
-                self._store.set_state(
-                    self.backend_name,
-                    {
-                        **current,
-                        "state": CircuitState.OPEN.value,
-                        "last_failure_time": merged_last_failure,
-                        "open_until": merged_open_until,
-                        "half_open_probe_active": False,
-                    },
+                # All CAS attempts exhausted. Blind set_state risks overwriting a
+                # fresher open_until written by a concurrent writer. Log a warning
+                # and rely on the circuit to self-heal via the next record_failure.
+                self._log(
+                    "force_open: CAS exhausted after 5 attempts; skipping fallback set_state",
+                    open_for_seconds=duration,
                 )
             self._log(
                 f"Circuit breaker force-opened: {reason}",

@@ -164,7 +164,7 @@ class TestAdversarialInMemoryStoreConcurrency:
         def run_safely(action: Any) -> None:
             try:
                 action("backend")
-            except BaseException as exc:
+            except Exception as exc:
                 with exception_lock:
                     exceptions.append(exc)
 
@@ -188,7 +188,7 @@ class TestAdversarialInMemoryStoreConcurrency:
         def set_open_state() -> None:
             try:
                 store.set_state("backend", _complete_state(state="open"))
-            except BaseException as exc:
+            except Exception as exc:
                 with lock:
                     exceptions.append(exc)
 
@@ -197,7 +197,7 @@ class TestAdversarialInMemoryStoreConcurrency:
                 state = store.get_state("backend")
                 with lock:
                     observed_states.append(state)
-            except BaseException as exc:
+            except Exception as exc:
                 with lock:
                     exceptions.append(exc)
 
@@ -729,13 +729,9 @@ class TestAdversarialCBIntegration:
         # After partial write: HSET succeeded (data readable), EXPIRE failed (no TTL).
         # State is defined -- either full data if HSET was atomic, or empty if HSET
         # also failed. Both are acceptable; no crash and no corrupted type errors.
-        try:
-            state = store.get_state("backend")
-            # If data was written, it should be structurally valid.
-            assert isinstance(state["failure_count"], int)
-            assert state["state"] in ("closed", "open", "half_open")
-        except Exception as exc:
-            pytest.fail(f"get_state raised after partial write: {exc}")
+        state = store.get_state("backend")
+        assert isinstance(state["failure_count"], int)
+        assert state["state"] in ("closed", "open", "half_open")
 
     def test_two_cb_same_store_different_backends(self) -> None:
         store = InMemoryStore()
