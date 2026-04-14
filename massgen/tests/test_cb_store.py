@@ -261,7 +261,11 @@ class TestInMemoryStoreAtomicRecordSuccess:
 
         state = store.atomic_record_success("claude")
 
-        assert state == expected
+        # state includes _prev_state / _prev_was_half_open metadata -- compare core fields only
+        core_keys = set(expected.keys())
+        assert {k: state[k] for k in core_keys} == expected
+        assert state["_prev_state"] == "open"
+        assert state["_prev_was_half_open"] is False
         assert store.get_state("claude") == expected
 
     def test_expected_state_mismatch_is_noop(self):
@@ -440,7 +444,11 @@ class TestRedisStoreAtomicRecordSuccess:
 
         state = store.atomic_record_success("claude")
 
-        assert state == expected
+        # state includes _prev_state / _prev_was_half_open metadata -- compare core fields only
+        core_keys = set(expected.keys())
+        assert {k: state[k] for k in core_keys} == expected
+        assert state["_prev_state"] == "open"
+        assert state["_prev_was_half_open"] is False
         assert store.get_state("claude") == expected
 
     def test_expected_state_mismatch_is_noop(self):

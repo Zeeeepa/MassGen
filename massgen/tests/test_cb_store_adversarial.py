@@ -250,7 +250,7 @@ class TestAdversarialRedisStore:
     def test_redis_store_increment_preserves_open_state_ttl(self) -> None:
         client = _fake_redis()
         store = RedisStore(client, ttl=1)
-        open_until = time.monotonic() + 120
+        open_until = time.time() + 120
         store.set_state(
             "backend",
             _complete_state(state="open", open_until=open_until),
@@ -267,7 +267,7 @@ class TestAdversarialRedisStore:
     ) -> None:
         client = _fake_redis()
         store = RedisStore(client, ttl=1)
-        open_until = time.monotonic() + 120
+        open_until = time.time() + 120
         store.set_state(
             "backend",
             _complete_state(state="open", open_until=open_until),
@@ -312,7 +312,7 @@ class TestAdversarialRedisStore:
     def test_redis_store_open_state_ttl_covers_open_until(self) -> None:
         client = _fake_redis()
         store = RedisStore(client, ttl=1)
-        open_until = time.monotonic() + 120
+        open_until = time.time() + 120
 
         store.set_state(
             "backend",
@@ -324,7 +324,7 @@ class TestAdversarialRedisStore:
     def test_redis_store_cas_open_state_ttl_covers_open_until(self) -> None:
         client = _fake_redis()
         store = RedisStore(client, ttl=1)
-        open_until = time.monotonic() + 120
+        open_until = time.time() + 120
 
         result = store.cas_state(
             "backend",
@@ -386,7 +386,7 @@ class TestAdversarialRedisStore:
             res = store.cas_state(
                 "backend",
                 "closed",
-                {"state": "open", "open_until": time.monotonic() + 60},
+                {"state": "open", "open_until": time.time() + 60},
             )
             with lock:
                 results.append(res)
@@ -608,7 +608,7 @@ class TestAdversarialCBIntegration:
 
         cb.force_open()
         state = store.get_state("backend")
-        state["open_until"] = time.monotonic() - 1
+        state["open_until"] = time.time() - 1
         store.set_state("backend", state)
 
         assert cb.should_block() is False
@@ -619,7 +619,7 @@ class TestAdversarialCBIntegration:
 
         cb.force_open()
         state = store.get_state("backend")
-        state["open_until"] = time.monotonic() - 1
+        state["open_until"] = time.time() - 1
         store.set_state("backend", state)
         assert cb.should_block() is False
         assert cb.state == CircuitState.HALF_OPEN
@@ -782,16 +782,21 @@ class TestConcurrentLinearizability:
 
 class TestForceOpenRace:
     def test_force_open_wins_over_concurrent_record_success(self) -> None:
-        success_read = threading.Event()
+        # record_success() now calls atomic_record_success() directly (no prior
+        # get_state() read). The old TOCTOU window -- where force_open() could
+        # slip between get_state() and atomic_record_success() -- no longer
+        # exists. This test verifies that when force_open() completes BEFORE
+        # atomic_record_success() acquires the lock, the OPEN state is preserved
+        # because atomic_record_success() guards against open with no
+        # expected_state.
         force_open_done = threading.Event()
+        success_start = threading.Event()
 
         class CoordinatedStore(InMemoryStore):
-            def get_state(self, backend: str) -> dict:
-                state = super().get_state(backend)
-                if threading.current_thread().name == "record-success":
-                    success_read.set()
-                    assert force_open_done.wait(timeout=5)
-                return state
+            def atomic_record_success(self, backend: str, expected_state: str | None = None) -> dict:
+                success_start.set()
+                assert force_open_done.wait(timeout=5)
+                return super().atomic_record_success(backend, expected_state)
 
         store = CoordinatedStore()
         cb = LLMCircuitBreaker(
@@ -801,7 +806,7 @@ class TestForceOpenRace:
         )
 
         def force_open() -> None:
-            assert success_read.wait(timeout=5)
+            assert success_start.wait(timeout=5)
             cb.force_open("quota", open_for_seconds=30)
             force_open_done.set()
 
@@ -817,6 +822,7 @@ class TestForceOpenRace:
         for thread in threads:
             thread.join()
 
+        # force_open() ran before atomic_record_success() -- OPEN must survive
         assert cb.state == CircuitState.OPEN
         assert store.get_state("claude")["state"] == "open"
 
@@ -841,3 +847,213 @@ class TestAtomicFailureOrdering:
         state = store.get_state("claude")
         assert state["failure_count"] == thread_count
         assert state["failure_count"] <= thread_count
+
+
+class TestTryTransitionAndClaimProbe:
+    """Adversarial tests for the atomic OPEN->HALF_OPEN / probe-claim op."""
+
+    def test_inmemory_open_elapsed_transitions_exactly_one(self) -> None:
+        store = InMemoryStore()
+        store.set_state(
+            "claude",
+            _complete_state(state="open", open_until=time.time() - 0.01),
+        )
+
+        results: list[tuple[bool, str | None]] = []
+        lock = threading.Lock()
+
+        def claim() -> None:
+            won, _state, label = store.try_transition_and_claim_probe(
+                "claude",
+                time.time(),
+                30.0,
+            )
+            with lock:
+                results.append((won, label))
+
+        threads = [threading.Thread(target=claim) for _ in range(50)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        winners = [r for r in results if r[0]]
+        assert len(winners) == 1, f"exactly one winner expected, got {len(winners)}"
+        assert winners[0][1] == "open->half_open"
+        assert store.get_state("claude")["half_open_probe_active"] is True
+        assert store.get_state("claude")["state"] == "half_open"
+
+    def test_inmemory_half_open_probe_claim_exactly_one(self) -> None:
+        store = InMemoryStore()
+        store.set_state(
+            "claude",
+            _complete_state(state="half_open", half_open_probe_active=False),
+        )
+
+        results: list[bool] = []
+        lock = threading.Lock()
+
+        def claim() -> None:
+            won, _state, _label = store.try_transition_and_claim_probe(
+                "claude",
+                time.time(),
+                30.0,
+            )
+            with lock:
+                results.append(won)
+
+        threads = [threading.Thread(target=claim) for _ in range(50)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sum(results) == 1, f"exactly one probe winner, got {sum(results)}"
+
+    def test_inmemory_open_not_yet_elapsed_blocks(self) -> None:
+        store = InMemoryStore()
+        store.set_state(
+            "claude",
+            _complete_state(state="open", open_until=time.time() + 100),
+        )
+
+        won, state, label = store.try_transition_and_claim_probe(
+            "claude",
+            time.time(),
+            30.0,
+        )
+        assert won is False
+        assert label is None
+        assert state["state"] == "open"
+
+    def test_inmemory_force_open_during_transition_no_phantom_half_open(self) -> None:
+        """force_open extending open_until must not be undone by a stale CAS."""
+        store = InMemoryStore()
+        # Initially OPEN with elapsed open_until -- ripe for transition
+        store.set_state(
+            "claude",
+            _complete_state(state="open", open_until=time.time() - 0.01),
+        )
+
+        # Simulate force_open extending open_until before our claim
+        store.set_state(
+            "claude",
+            _complete_state(state="open", open_until=time.time() + 100),
+        )
+
+        won, state, _label = store.try_transition_and_claim_probe(
+            "claude",
+            time.time(),
+            30.0,
+        )
+        # New open_until is in the future -- must NOT transition
+        assert won is False
+        assert state["state"] == "open"
+
+    def test_redis_open_elapsed_transitions_exactly_one(self) -> None:
+        client = _fake_redis()
+        store = RedisStore(client, ttl=60)
+        store.set_state(
+            "claude",
+            _complete_state(state="open", open_until=time.time() - 0.01),
+        )
+
+        results: list[tuple[bool, str | None]] = []
+        lock = threading.Lock()
+
+        def claim() -> None:
+            won, _state, label = store.try_transition_and_claim_probe(
+                "claude",
+                time.time(),
+                30.0,
+            )
+            with lock:
+                results.append((won, label))
+
+        threads = [threading.Thread(target=claim) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        winners = [r for r in results if r[0]]
+        assert len(winners) == 1
+        assert winners[0][1] == "open->half_open"
+
+    def test_redis_open_not_elapsed_blocks(self) -> None:
+        client = _fake_redis()
+        store = RedisStore(client, ttl=60)
+        store.set_state(
+            "claude",
+            _complete_state(state="open", open_until=time.time() + 100),
+        )
+
+        won, state, label = store.try_transition_and_claim_probe(
+            "claude",
+            time.time(),
+            30.0,
+        )
+        assert won is False
+        assert label is None
+        assert state["state"] == "open"
+
+
+class TestMakeStoreFactory:
+    """Adversarial tests for the make_store factory function."""
+
+    def test_make_store_redis_missing_client_raises_valueerror(self) -> None:
+        from massgen.backend.cb_store import make_store
+
+        with pytest.raises(ValueError, match="redis_client is required"):
+            make_store("redis")
+
+    def test_make_store_redis_forwards_key_prefix(self) -> None:
+        from massgen.backend.cb_store import make_store
+
+        client = _fake_redis()
+        store = make_store(
+            "redis",
+            redis_client=client,
+            ttl=42,
+            key_prefix="custom:ns",
+        )
+        assert isinstance(store, RedisStore)
+        assert store._key_prefix == "custom:ns"
+        assert store._ttl == 42
+
+    def test_make_store_memory_default(self) -> None:
+        from massgen.backend.cb_store import make_store
+
+        store = make_store()
+        assert isinstance(store, InMemoryStore)
+
+    def test_make_store_unknown_backend_raises(self) -> None:
+        from massgen.backend.cb_store import make_store
+
+        with pytest.raises(ValueError, match="Unknown circuit breaker store"):
+            make_store("postgres")
+
+
+class TestProbeOwnershipInRetries:
+    """Adversarial: store-mode probe ownership tracking through retries."""
+
+    def test_store_mode_probe_owner_tracked_via_should_block_with_claim(self) -> None:
+        """Verify _should_block_with_claim returns claim flag in store mode."""
+        store = InMemoryStore()
+        store.set_state(
+            "claude",
+            _complete_state(state="open", open_until=time.time() - 1),
+        )
+        cb = LLMCircuitBreaker(
+            backend_name="claude",
+            config=_enabled_config(reset_time_seconds=30),
+            store=store,
+        )
+
+        blocked, claimed = cb._should_block_with_claim()
+        assert blocked is False
+        assert claimed is True
+        # Subsequent caller must NOT also claim (probe already taken)
+        blocked2, claimed2 = cb._should_block_with_claim()
+        assert blocked2 is True
+        assert claimed2 is False

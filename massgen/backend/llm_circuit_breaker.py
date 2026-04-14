@@ -233,53 +233,55 @@ class LLMCircuitBreaker:
             True if the circuit is OPEN and reset time has not elapsed.
             In HALF_OPEN, allows exactly one probe request.
         """
+        blocked, _ = self._should_block_with_claim()
+        return blocked
+
+    def _should_block_with_claim(self) -> tuple[bool, bool]:
+        """Internal variant of should_block that also reports probe ownership.
+
+        Returns:
+            (should_block, claimed_probe). ``claimed_probe`` is True iff this
+            call transitioned OPEN->HALF_OPEN or claimed the HALF_OPEN probe
+            slot. Always False when should_block is True.
+        """
         if not self.config.enabled:
-            return False
+            return False, False
 
         if self._store is not None:
-            for _ in range(2):
-                state = self._store.get_state(self.backend_name)
-                circuit_state = CircuitState(state["state"])
+            state = self._store.get_state(self.backend_name)
+            circuit_state = CircuitState(state["state"])
 
-                if circuit_state == CircuitState.CLOSED:
-                    return False
+            if circuit_state == CircuitState.CLOSED:
+                return False, False
 
-                if circuit_state == CircuitState.OPEN:
-                    now = time.monotonic()
-                    if now >= float(state["open_until"]):
-                        transitioned = self._store.cas_state(
-                            self.backend_name,
-                            CircuitState.OPEN.value,
-                            {
-                                "state": CircuitState.HALF_OPEN.value,
-                                "half_open_probe_active": True,
-                            },
-                        )
-                        if transitioned:
-                            self._log(
-                                "Circuit breaker half-open, allowing probe request",
-                            )
-                            if self._metrics is not None:
-                                self._safe_emit(
-                                    self._metrics.record_state_transition,
-                                    self.backend_name,
-                                    "open",
-                                    "half_open",
-                                )
-                            return False
-                        continue
-                    return True
+            if circuit_state == CircuitState.OPEN and time.time() < float(state["open_until"]):
+                return True, False
 
-                if state["half_open_probe_active"]:
-                    return True
-                return not self._store.cas_state(
-                    self.backend_name,
-                    CircuitState.HALF_OPEN.value,
-                    {"half_open_probe_active": True},
-                )
-            return True
+            if circuit_state == CircuitState.HALF_OPEN and state["half_open_probe_active"]:
+                return True, False
+
+            # OPEN (elapsed) or HALF_OPEN (probe not claimed): single atomic op
+            won, _new_state, transition = self._store.try_transition_and_claim_probe(
+                self.backend_name,
+                time.time(),
+                float(self.config.reset_time_seconds),
+            )
+            if not won:
+                return True, False
+
+            if transition == "open->half_open":
+                self._log("Circuit breaker half-open, allowing probe request")
+                if self._metrics is not None:
+                    self._safe_emit(
+                        self._metrics.record_state_transition,
+                        self.backend_name,
+                        "open",
+                        "half_open",
+                    )
+            return False, True
 
         _emit_transition: tuple[str, str] | None = None
+        claimed_probe_local = False
         with self._lock:
             if self._state == CircuitState.CLOSED:
                 should_block = False
@@ -293,6 +295,7 @@ class LLMCircuitBreaker:
                     self._log("Circuit breaker half-open, allowing probe request")
                     _emit_transition = ("open", "half_open")
                     should_block = False
+                    claimed_probe_local = True
                 else:
                     should_block = True
 
@@ -305,6 +308,7 @@ class LLMCircuitBreaker:
                     # No probe active -- allow one
                     self._half_open_probe_active = True
                     should_block = False
+                    claimed_probe_local = True
 
         if _emit_transition and self._metrics is not None:
             self._safe_emit(
@@ -312,7 +316,7 @@ class LLMCircuitBreaker:
                 self.backend_name,
                 *_emit_transition,
             )
-        return should_block
+        return should_block, claimed_probe_local
 
     def record_failure(
         self,
@@ -337,8 +341,9 @@ class LLMCircuitBreaker:
             new_state_str = new_state["state"]
 
             if new_state_str == CircuitState.OPEN.value:
-                prev_label = "half_open" if new_state.get("_prev_was_half_open") else new_state.get("_prev_state", "closed")
-                if new_state.get("_prev_was_half_open"):
+                prev_was_half_open = bool(new_state.get("_prev_was_half_open", False))
+                prev_label = str(new_state.get("_prev_state", "closed"))
+                if prev_was_half_open:
                     self._log(
                         "Probe failed, circuit breaker re-opened",
                         failure_count=failure_count,
@@ -361,7 +366,7 @@ class LLMCircuitBreaker:
                         self._safe_emit(
                             self._metrics.record_state_transition,
                             self.backend_name,
-                            prev_label,
+                            prev_label,  # now from _prev_state, never stale
                             "open",
                         )
             else:
@@ -422,10 +427,10 @@ class LLMCircuitBreaker:
             return
 
         if self._store is not None:
-            prev_state_str = self._store.get_state(self.backend_name)["state"]
-            self._store.atomic_record_success(self.backend_name)
+            new_state = self._store.atomic_record_success(self.backend_name)
+            prev_state_str = str(new_state.get("_prev_state", new_state["state"]))
 
-            if prev_state_str != CircuitState.CLOSED.value:
+            if prev_state_str != CircuitState.CLOSED.value and new_state["state"] == CircuitState.CLOSED.value:
                 self._log(
                     "Circuit breaker closed after success",
                     previous_state=prev_state_str,
@@ -472,7 +477,7 @@ class LLMCircuitBreaker:
             return
 
         if self._store is not None:
-            now = time.monotonic()
+            now = time.time()
             duration = max(self.config.reset_time_seconds, open_for_seconds)
             state = self._store.get_state(self.backend_name)
             prev_state_value = state.get("state", CircuitState.CLOSED.value)
@@ -579,11 +584,12 @@ class LLMCircuitBreaker:
         if not self.config.enabled:
             return await coro_factory()
 
-        if self.should_block():
-            # Note: state is read after should_block() for the error message
-            # and metric label. Under high concurrency, the state may transition between
-            # should_block() and the re-acquisition (e.g. OPEN->HALF_OPEN). The
-            # outcome label is best-effort; the rejection decision itself is authoritative.
+        _initial_blocked, _initial_claimed = self._should_block_with_claim()
+        if _initial_blocked:
+            # Note: state is read after the gate check for the error message
+            # and metric label. Under high concurrency, the state may transition
+            # between the gate and this read (e.g. OPEN->HALF_OPEN). The outcome
+            # label is best-effort; the rejection decision itself is authoritative.
             if self._store is not None:
                 state_label = self.state.value
             else:
@@ -598,28 +604,27 @@ class LLMCircuitBreaker:
 
         last_exc: Exception | None = None
         delay = 1.0  # initial backoff for CAP / retryable errors
-        _owns_probe = self.state == CircuitState.HALF_OPEN
+        _owns_probe = _initial_claimed
 
         try:
             for attempt in range(1, max_retries + 1):
                 # Re-check CB state at start of each attempt
-                if attempt > 1 and self.should_block():
-                    if self._store is not None:
-                        state_label = self.state.value
-                    else:
-                        with self._lock:
-                            state_label = self._state.value
-                    outcome = "rejected_open" if state_label == "open" else "rejected_half_open"
-                    if self._metrics is not None:
-                        self._safe_emit(self._metrics.record_request, self.backend_name, outcome, 0.0)
-                    raise CircuitBreakerOpenError(
-                        f"Circuit breaker became {state_label} during retries " f"for {self.backend_name}",
-                    )
-
-                if attempt > 1 and not _owns_probe:
-                    with self._lock:
-                        if self._state == CircuitState.HALF_OPEN:
-                            _owns_probe = True
+                if attempt > 1:
+                    _retry_blocked, _retry_claimed = self._should_block_with_claim()
+                    if _retry_claimed:
+                        _owns_probe = True
+                    if _retry_blocked:
+                        if self._store is not None:
+                            state_label = self.state.value
+                        else:
+                            with self._lock:
+                                state_label = self._state.value
+                        outcome = "rejected_open" if state_label == "open" else "rejected_half_open"
+                        if self._metrics is not None:
+                            self._safe_emit(self._metrics.record_request, self.backend_name, outcome, 0.0)
+                        raise CircuitBreakerOpenError(
+                            f"Circuit breaker became {state_label} during retries " f"for {self.backend_name}",
+                        )
 
                 _t0 = time.perf_counter()
                 try:
@@ -743,7 +748,7 @@ class LLMCircuitBreaker:
                         state.update(
                             {
                                 "state": CircuitState.OPEN.value,
-                                "open_until": time.monotonic() + self.config.reset_time_seconds,
+                                "open_until": time.time() + self.config.reset_time_seconds,
                                 "half_open_probe_active": False,
                             },
                         )

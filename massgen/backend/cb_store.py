@@ -23,16 +23,37 @@ def _default_state() -> dict[str, Any]:
 
 @runtime_checkable
 class CircuitBreakerStore(Protocol):
-    """Protocol for shared circuit breaker state stores."""
+    """Protocol for shared circuit breaker state stores.
+
+    Implementations must persist state using Unix wall-clock timestamps
+    (``time.time()``) for ``open_until`` and ``last_failure_time`` so that
+    values remain meaningful across processes. Returned dicts also include
+    the auxiliary keys ``_prev_state`` (str) and ``_prev_was_half_open``
+    (bool) for the atomic_record_* methods, so callers can emit transition
+    logs/metrics without a separate get_state() call.
+    """
 
     def get_state(self, backend: str) -> dict:
-        """Return the circuit breaker state for a backend."""
+        """Return a snapshot of the backend's circuit breaker state.
+
+        Args:
+            backend: Logical backend name used as the store key.
+
+        Returns:
+            Dict with keys: ``state`` (str), ``failure_count`` (int),
+            ``last_failure_time`` (float, Unix time), ``open_until``
+            (float, Unix time), ``half_open_probe_active`` (bool).
+        """
 
     def set_state(self, backend: str, state: dict) -> None:
         """Persist the complete circuit breaker state for a backend."""
 
     def cas_state(self, backend: str, expected_state: str, updates: dict) -> bool:
-        """Apply updates if the current state field matches expected_state."""
+        """Apply updates if the current state field matches expected_state.
+
+        Returns:
+            True if the update was applied, False otherwise.
+        """
 
     def increment_failure(self, backend: str) -> int:
         """Atomically increment and return the backend failure count."""
@@ -47,7 +68,8 @@ class CircuitBreakerStore(Protocol):
 
         The operation increments failure_count, records the current failure
         time, and applies the CLOSED/HALF_OPEN -> OPEN transition rules in one
-        store-level critical section.
+        store-level critical section. The returned dict includes ``_prev_state``
+        and ``_prev_was_half_open`` describing the state before this call.
         """
 
     def atomic_record_success(
@@ -59,7 +81,39 @@ class CircuitBreakerStore(Protocol):
 
         When expected_state is provided, the update is constrained to that
         current state. Without an expected state, OPEN is treated as a forced
-        open guard and is returned unchanged.
+        open guard and is returned unchanged. The returned dict includes
+        ``_prev_state`` and ``_prev_was_half_open``.
+        """
+
+    def try_transition_and_claim_probe(
+        self,
+        backend: str,
+        now: float,
+        recovery_timeout: float,
+    ) -> tuple[bool, dict, str | None]:
+        """Atomically transition OPEN->HALF_OPEN or claim HALF_OPEN probe.
+
+        All checks and writes occur in one store-level critical section:
+
+        - If state==OPEN and now >= open_until: set state=HALF_OPEN,
+          half_open_probe_active=True. Returns ``(True, new_state,
+          "open->half_open")``.
+        - Elif state==HALF_OPEN and not half_open_probe_active: set
+          half_open_probe_active=True. Returns ``(True, new_state,
+          "half_open_probe_claimed")``.
+        - Else: returns ``(False, current_state, None)``.
+
+        Args:
+            backend: Logical backend name.
+            now: Unix timestamp (``time.time()``) used for the open_until
+                comparison. The caller owns the clock to match the values
+                the store persists via ``atomic_record_failure`` and
+                ``force_open``.
+            recovery_timeout: Reserved for future TTL computation.
+
+        Returns:
+            ``(won, new_state, transition_label)`` -- ``won`` is True iff
+            this caller successfully transitioned or claimed the probe.
         """
 
     def clear(self, backend: str) -> None:
@@ -67,7 +121,13 @@ class CircuitBreakerStore(Protocol):
 
 
 class InMemoryStore:
-    """Thread-safe in-process circuit breaker store."""
+    """Thread-safe in-process circuit breaker store.
+
+    Uses an RLock for mutual exclusion. All timestamps are ``time.time()``
+    (Unix wall-clock) to stay consistent with RedisStore semantics. This
+    store is intended for single-process deployments and as the default
+    test fixture; use RedisStore for multi-process coordination.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -112,7 +172,8 @@ class InMemoryStore:
                 self._storage[backend] = _default_state()
 
             state = copy.deepcopy(self._storage[backend])
-            now = time.monotonic()
+            prev_state_str = str(state["state"])
+            now = time.time()
             failure_count = int(state["failure_count"]) + 1
             state["failure_count"] = failure_count
             state["last_failure_time"] = now
@@ -127,7 +188,10 @@ class InMemoryStore:
                 state["half_open_probe_active"] = False
 
             self._storage[backend] = state
-            return copy.deepcopy(state)
+            result = copy.deepcopy(state)
+            result["_prev_state"] = prev_state_str
+            result["_prev_was_half_open"] = prev_state_str == "half_open"
+            return result
 
     def atomic_record_success(
         self,
@@ -139,25 +203,64 @@ class InMemoryStore:
                 self._storage[backend] = _default_state()
 
             state = copy.deepcopy(self._storage[backend])
-            current_state = str(state["state"])
+            prev_state_str = str(state["state"])
 
-            if expected_state is not None and current_state != expected_state:
-                return copy.deepcopy(state)
+            if expected_state is not None and prev_state_str != expected_state:
+                result = copy.deepcopy(state)
+                result["_prev_state"] = prev_state_str
+                result["_prev_was_half_open"] = prev_state_str == "half_open"
+                return result
 
-            if expected_state is None and current_state == "open":
-                return copy.deepcopy(state)
+            if expected_state is None and prev_state_str == "open":
+                result = copy.deepcopy(state)
+                result["_prev_state"] = prev_state_str
+                result["_prev_was_half_open"] = False
+                return result
 
-            if current_state == "closed":
+            if prev_state_str == "closed":
                 state["failure_count"] = 0
                 state["half_open_probe_active"] = False
                 self._storage[backend] = state
-            elif current_state == "half_open":
+            elif prev_state_str == "half_open":
                 state["state"] = "closed"
                 state["failure_count"] = 0
                 state["half_open_probe_active"] = False
                 self._storage[backend] = state
 
-            return copy.deepcopy(state)
+            result = copy.deepcopy(state)
+            result["_prev_state"] = prev_state_str
+            result["_prev_was_half_open"] = prev_state_str == "half_open"
+            return result
+
+    def try_transition_and_claim_probe(
+        self,
+        backend: str,
+        now: float,
+        recovery_timeout: float,
+    ) -> tuple[bool, dict, str | None]:
+        """Atomically transition OPEN->HALF_OPEN or claim HALF_OPEN probe.
+
+        See ``CircuitBreakerStore.try_transition_and_claim_probe`` for the
+        protocol contract. ``recovery_timeout`` is accepted for API
+        compatibility but not used in-memory.
+        """
+        del recovery_timeout  # reserved for future use
+        with self._lock:
+            if backend not in self._storage:
+                self._storage[backend] = _default_state()
+            state = self._storage[backend]
+            current = state["state"]
+
+            if current == "open" and now >= float(state["open_until"]):
+                state["state"] = "half_open"
+                state["half_open_probe_active"] = True
+                return True, copy.deepcopy(state), "open->half_open"
+
+            if current == "half_open" and not state["half_open_probe_active"]:
+                state["half_open_probe_active"] = True
+                return True, copy.deepcopy(state), "half_open_probe_claimed"
+
+            return False, copy.deepcopy(state), None
 
     def clear(self, backend: str) -> None:
         with self._lock:
@@ -165,7 +268,20 @@ class InMemoryStore:
 
 
 class RedisStore:
-    """Redis hash-backed circuit breaker store."""
+    """Redis hash-backed circuit breaker store.
+
+    Provides cross-process atomicity via Lua scripts with WATCH/MULTI/EXEC
+    fallback when Lua scripting is unavailable. All persisted timestamps
+    (``open_until``, ``last_failure_time``) are Unix wall-clock seconds so
+    that they remain comparable across processes and machines.
+
+    Args:
+        redis_client: A ``redis.Redis``-compatible client.
+        ttl: Default TTL in seconds applied to the per-backend hash key.
+        key_prefix: Namespace prefix -- allows multiple logical breakers
+            (e.g. test vs prod) to share one Redis instance without key
+            collisions.
+    """
 
     _CAS_SCRIPT = """
 local current_state = redis.call("HGET", KEYS[1], "state")
@@ -228,6 +344,7 @@ if now == nil then
     now = tonumber(redis_time[1]) + (tonumber(redis_time[2]) / 1000000)
 end
 
+local prev_state = state["state"]
 local failure_count = tonumber(state["failure_count"]) or 0
 failure_count = failure_count + 1
 state["failure_count"] = tostring(failure_count)
@@ -268,6 +385,8 @@ if state["state"] == "open" then
     end
 end
 redis.call("EXPIRE", KEYS[1], effective_ttl)
+local prev_was_half_open = "False"
+if prev_state == "half_open" then prev_was_half_open = "True" end
 return {
     "state",
     state["state"],
@@ -278,7 +397,11 @@ return {
     "open_until",
     state["open_until"],
     "half_open_probe_active",
-    state["half_open_probe_active"]
+    state["half_open_probe_active"],
+    "_prev_state",
+    prev_state,
+    "_prev_was_half_open",
+    prev_was_half_open
 }
 """
 
@@ -298,8 +421,11 @@ end
 local expected_state = ARGV[1]
 local ttl = tonumber(ARGV[2])
 local should_write = 0
+local prev_state = state["state"]
 
 if expected_state ~= "" and state["state"] ~= expected_state then
+    local prev_was_half_open = "False"
+    if prev_state == "half_open" then prev_was_half_open = "True" end
     return {
         "state",
         state["state"],
@@ -310,7 +436,11 @@ if expected_state ~= "" and state["state"] ~= expected_state then
         "open_until",
         state["open_until"],
         "half_open_probe_active",
-        state["half_open_probe_active"]
+        state["half_open_probe_active"],
+        "_prev_state",
+        prev_state,
+        "_prev_was_half_open",
+        prev_was_half_open
     }
 end
 
@@ -325,7 +455,11 @@ if state["state"] == "open" and expected_state == "" then
         "open_until",
         state["open_until"],
         "half_open_probe_active",
-        state["half_open_probe_active"]
+        state["half_open_probe_active"],
+        "_prev_state",
+        prev_state,
+        "_prev_was_half_open",
+        "False"
     }
 end
 
@@ -354,6 +488,8 @@ if should_write == 1 then
     redis.call("EXPIRE", KEYS[1], ttl)
 end
 
+local prev_was_half_open = "False"
+if prev_state == "half_open" then prev_was_half_open = "True" end
 return {
     "state",
     state["state"],
@@ -364,7 +500,63 @@ return {
     "open_until",
     state["open_until"],
     "half_open_probe_active",
-    state["half_open_probe_active"]
+    state["half_open_probe_active"],
+    "_prev_state",
+    prev_state,
+    "_prev_was_half_open",
+    prev_was_half_open
+}
+"""
+
+    _TRANSITION_PROBE_SCRIPT = """
+local raw = redis.call("HGETALL", KEYS[1])
+local state = {
+    state = "closed",
+    failure_count = "0",
+    last_failure_time = "0.0",
+    open_until = "0.0",
+    half_open_probe_active = "False"
+}
+for i = 1, #raw, 2 do
+    state[raw[i]] = raw[i + 1]
+end
+
+local now = tonumber(ARGV[1])
+if now == nil then
+    local redis_time = redis.call("TIME")
+    now = tonumber(redis_time[1]) + (tonumber(redis_time[2]) / 1000000)
+end
+local ttl = tonumber(ARGV[2])
+local transition = ""
+
+if state["state"] == "open" and now >= tonumber(state["open_until"]) then
+    state["state"] = "half_open"
+    state["half_open_probe_active"] = "True"
+    transition = "open->half_open"
+elseif state["state"] == "half_open" and state["half_open_probe_active"] == "False" then
+    state["half_open_probe_active"] = "True"
+    transition = "half_open_probe_claimed"
+end
+
+if transition ~= "" then
+    redis.call(
+        "HSET", KEYS[1],
+        "state", state["state"],
+        "failure_count", state["failure_count"],
+        "last_failure_time", state["last_failure_time"],
+        "open_until", state["open_until"],
+        "half_open_probe_active", state["half_open_probe_active"]
+    )
+    redis.call("EXPIRE", KEYS[1], ttl)
+end
+
+return {
+    transition,
+    "state", state["state"],
+    "failure_count", state["failure_count"],
+    "last_failure_time", state["last_failure_time"],
+    "open_until", state["open_until"],
+    "half_open_probe_active", state["half_open_probe_active"]
 }
 """
 
@@ -431,7 +623,7 @@ return {
                 str(int(failure_threshold)),
                 str(float(recovery_timeout)),
                 str(self._ttl),
-                str(time.monotonic()),
+                str(time.time()),
             )
         except Exception as exc:
             if not self._script_unavailable(exc):
@@ -462,6 +654,81 @@ return {
             return self._atomic_record_success_without_lua(backend, expected_state)
         return self._state_from_flat_pairs(result)
 
+    def try_transition_and_claim_probe(
+        self,
+        backend: str,
+        now: float,
+        recovery_timeout: float,
+    ) -> tuple[bool, dict, str | None]:
+        """Atomically transition OPEN->HALF_OPEN or claim HALF_OPEN probe.
+
+        See ``CircuitBreakerStore.try_transition_and_claim_probe`` for the
+        contract. ``recovery_timeout`` is accepted for API parity and
+        reserved for future TTL policy decisions.
+        """
+        del recovery_timeout  # reserved
+        try:
+            result = self._client.eval(
+                self._TRANSITION_PROBE_SCRIPT,
+                1,
+                self._key(backend),
+                str(now),
+                str(max(1, self._ttl)),
+            )
+        except Exception as exc:
+            if not self._script_unavailable(exc):
+                raise
+            return self._try_transition_and_claim_probe_without_lua(backend, now)
+        pairs = list(result)
+        if not pairs:
+            return False, self.get_state(backend), None
+        transition_label = self._decode(pairs[0])
+        state = self._state_from_flat_pairs(pairs[1:])
+        if transition_label:
+            return True, state, transition_label
+        return False, state, None
+
+    def _try_transition_and_claim_probe_without_lua(
+        self,
+        backend: str,
+        now: float,
+    ) -> tuple[bool, dict, str | None]:
+        key = self._key(backend)
+        with self._fallback_lock:
+            for attempt in range(3):
+                pipe = self._client.pipeline(True)
+                try:
+                    pipe.watch(key)
+                    raw_state = pipe.hgetall(key)
+                    state = self._state_from_items(raw_state.items())
+                    current = state["state"]
+                    transition: str | None = None
+
+                    if current == "open" and now >= float(state["open_until"]):
+                        state["state"] = "half_open"
+                        state["half_open_probe_active"] = True
+                        transition = "open->half_open"
+                    elif current == "half_open" and not state["half_open_probe_active"]:
+                        state["half_open_probe_active"] = True
+                        transition = "half_open_probe_claimed"
+                    else:
+                        pipe.reset()
+                        return False, state, None
+
+                    pipe.multi()
+                    pipe.hset(key, mapping=self._state_to_mapping(state))
+                    pipe.expire(key, self._compute_ttl(state))
+                    pipe.execute()
+                    return True, state, transition
+                except Exception as exc:
+                    if self._watch_retryable(exc):
+                        time.sleep(0.001 * (2**attempt))
+                        continue
+                    raise
+                finally:
+                    pipe.reset()
+        return False, self.get_state(backend), None
+
     def clear(self, backend: str) -> None:
         self._client.delete(self._key(backend))
 
@@ -489,9 +756,9 @@ return {
                 state[key] = int(value)
             elif key in {"last_failure_time", "open_until"}:
                 state[key] = float(value)
-            elif key == "half_open_probe_active":
+            elif key in {"half_open_probe_active", "_prev_was_half_open"}:
                 state[key] = value == "True"
-            elif key == "state":
+            elif key in {"state", "_prev_state"}:
                 state[key] = value
         return state
 
@@ -517,7 +784,7 @@ return {
     def _compute_ttl(self, updates: dict) -> int:
         if updates.get("state") == "open":
             open_until = float(updates.get("open_until", 0))
-            remaining = int(open_until - time.monotonic())
+            remaining = int(open_until - time.time())
             return max(1, self._ttl, remaining + 60)
         return max(1, self._ttl)
 
@@ -599,7 +866,8 @@ return {
                     pipe.watch(key)
                     raw_state = pipe.hgetall(key)
                     state = self._state_from_items(raw_state.items())
-                    now = time.monotonic()
+                    prev_state_str = str(state["state"])
+                    now = time.time()
                     failure_count = int(state["failure_count"]) + 1
                     state["failure_count"] = failure_count
                     state["last_failure_time"] = now
@@ -617,6 +885,8 @@ return {
                     pipe.hset(key, mapping=self._state_to_mapping(state))
                     pipe.expire(key, self._compute_ttl(state))
                     pipe.execute()
+                    state["_prev_state"] = prev_state_str
+                    state["_prev_was_half_open"] = prev_state_str == "half_open"
                     return state
                 except Exception as exc:
                     if self._watch_retryable(exc):
@@ -642,15 +912,19 @@ return {
                     pipe.watch(key)
                     raw_state = pipe.hgetall(key)
                     state = self._state_from_items(raw_state.items())
-                    current_state = str(state["state"])
+                    prev_state_str = str(state["state"])
 
-                    if expected_state is not None and current_state != expected_state:
+                    if expected_state is not None and prev_state_str != expected_state:
+                        state["_prev_state"] = prev_state_str
+                        state["_prev_was_half_open"] = prev_state_str == "half_open"
                         return state
 
-                    if expected_state is None and current_state == "open":
+                    if expected_state is None and prev_state_str == "open":
+                        state["_prev_state"] = prev_state_str
+                        state["_prev_was_half_open"] = False
                         return state
 
-                    if current_state in {"closed", "half_open"}:
+                    if prev_state_str in {"closed", "half_open"}:
                         state["state"] = "closed"
                         state["failure_count"] = 0
                         state["half_open_probe_active"] = False
@@ -659,6 +933,8 @@ return {
                         pipe.expire(key, self._compute_ttl(state))
                         pipe.execute()
 
+                    state["_prev_state"] = prev_state_str
+                    state["_prev_was_half_open"] = prev_state_str == "half_open"
                     return state
                 except Exception as exc:
                     if self._watch_retryable(exc):
@@ -673,12 +949,29 @@ return {
 
 
 def make_store(backend: str = "memory", **kwargs: Any) -> CircuitBreakerStore:
-    """Create a circuit breaker state store."""
+    """Create a circuit breaker state store.
+
+    Args:
+        backend: ``"memory"`` for the in-process store or ``"redis"`` for the
+            Redis-backed store.
+        **kwargs: For ``"redis"``, ``redis_client`` is required; ``ttl``
+            (default 3600) and ``key_prefix`` (default ``"massgen:cb"``)
+            are forwarded to ``RedisStore``.
+
+    Raises:
+        ValueError: If ``backend`` is unknown, or if ``backend=="redis"`` but
+            ``redis_client`` is missing.
+    """
     if backend == "memory":
         return InMemoryStore()
     if backend == "redis":
-        return RedisStore(
-            kwargs["redis_client"],
-            ttl=kwargs.get("ttl", 3600),
-        )
+        redis_client = kwargs.get("redis_client")
+        if redis_client is None:
+            raise ValueError(
+                "redis_client is required for backend='redis'",
+            )
+        redis_kwargs: dict[str, Any] = {"ttl": kwargs.get("ttl", 3600)}
+        if "key_prefix" in kwargs:
+            redis_kwargs["key_prefix"] = kwargs["key_prefix"]
+        return RedisStore(redis_client, **redis_kwargs)
     raise ValueError(f"Unknown circuit breaker store backend: {backend}")
